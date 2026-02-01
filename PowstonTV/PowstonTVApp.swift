@@ -1,15 +1,15 @@
 //
-//  PowstonApp.swift
-//  Powston
+//  PowstonTVApp.swift
+//  PowstonTV
 //
-//  Created by Rick Bollar on 12/26/25.
+//  Created by Rick Bollar on 1/2/26.
 //
 
 import SwiftUI
 import SwiftData
 
 @main
-struct PowstonApp: App {
+struct PowstonTVApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
             Item.self,

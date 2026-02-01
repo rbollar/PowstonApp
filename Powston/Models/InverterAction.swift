@@ -1,0 +1,353 @@
+//
+//  InverterAction.swift
+//  Powston
+//
+//  Data model for inverter actions with multi-inverter support
+//
+
+import Foundation
+
+// MARK: - Inverter Action Model
+struct InverterAction: Identifiable, Codable {
+    let id: Int
+    let inverterId: Int
+    let action: String
+    let reason: String
+    let time: String
+    let intervalTime: String
+    let createdAt: String
+    
+    // Raw values JSON - we'll extract what we need
+    let valuesJSON: String?
+    
+    // Extracted fields (populated after parsing)
+    var batterySoc: Double?
+    var buyPrice: Double?
+    var sellPrice: Double?
+    var gridPower: Double?
+    var solarPower: Double?
+    var housePower: Double?
+    var batteryPower: Double?
+    
+    // For multi-inverter support
+    var inverterSerial: String?
+    var nestedInverterData: [String: NestedInverterSOC]?
+    
+    // Parsed date
+    var date: Date? {
+        // Try intervalTime first (ISO format)
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = isoFormatter.date(from: intervalTime) {
+            return date
+        }
+        // Try without fractional seconds
+        isoFormatter.formatOptions = [.withInternetDateTime]
+        if let date = isoFormatter.date(from: intervalTime) {
+            return date
+        }
+        // Try time field with timezone
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssXXXXX"
+        if let date = formatter.date(from: time) {
+            return date
+        }
+        return nil
+    }
+    
+    // Brisbane time for display
+    var brisbaneDate: Date? {
+        date
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case inverterId = "inverter_id"
+        case action
+        case reason
+        case time
+        case intervalTime = "interval_time"
+        case createdAt = "created_at"
+        case valuesJSON = "values"
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        id = try container.decode(Int.self, forKey: .id)
+        inverterId = try container.decode(Int.self, forKey: .inverterId)
+        action = try container.decode(String.self, forKey: .action)
+        reason = try container.decodeIfPresent(String.self, forKey: .reason) ?? ""
+        time = try container.decodeIfPresent(String.self, forKey: .time) ?? ""
+        intervalTime = try container.decodeIfPresent(String.self, forKey: .intervalTime) ?? ""
+        createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
+        
+        // Values comes as a JSON string, not an object
+        valuesJSON = try container.decodeIfPresent(String.self, forKey: .valuesJSON)
+        
+        // Parse values JSON to extract key fields
+        parseValues()
+    }
+    
+    init(id: Int, inverterId: Int, action: String, reason: String, time: String, intervalTime: String, createdAt: String, valuesJSON: String?) {
+        self.id = id
+        self.inverterId = inverterId
+        self.action = action
+        self.reason = reason
+        self.time = time
+        self.intervalTime = intervalTime
+        self.createdAt = createdAt
+        self.valuesJSON = valuesJSON
+        parseValues()
+    }
+    
+    // MARK: - Parse Values JSON
+    mutating func parseValues() {
+        guard let json = valuesJSON,
+              let data = json.data(using: .utf8) else { return }
+        
+        do {
+            if let values = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                // Direct values
+                buyPrice = values["buy_price"] as? Double
+                sellPrice = values["sell_price"] as? Double
+                gridPower = values["grid_power"] as? Double ?? values["pgrid"] as? Double
+                solarPower = values["solar_power"] as? Double ?? values["ppv"] as? Double
+                housePower = values["house_power"] as? Double
+                batteryPower = values["battery_power"] as? Double
+                batterySoc = values["battery_soc"] as? Double
+                
+                // Check runtime_params for more detailed data
+                if let runtimeParams = values["runtime_params"] as? [String: Any] {
+                    // Main inverter values
+                    if batterySoc == nil {
+                        batterySoc = runtimeParams["battery_soc"] as? Double
+                    }
+                    if gridPower == nil {
+                        gridPower = runtimeParams["grid_power"] as? Double ?? runtimeParams["pgrid"] as? Double
+                    }
+                    if solarPower == nil {
+                        solarPower = runtimeParams["solar_power"] as? Double ?? runtimeParams["ppv"] as? Double
+                    }
+                    if housePower == nil {
+                        housePower = runtimeParams["house_power"] as? Double
+                    }
+                    if batteryPower == nil {
+                        batteryPower = runtimeParams["battery_power"] as? Double
+                    }
+                    
+                    // Extract nested inverter data (for multi-inverter sites)
+                    var nested: [String: NestedInverterSOC] = [:]
+                    for (key, value) in runtimeParams {
+                        // Nested inverters are keyed by serial number (e.g., "A23B0200864")
+                        if key.hasPrefix("A") && key.count > 8,
+                           let inverterData = value as? [String: Any] {
+                            let soc = inverterData["battery_soc"] as? Double
+                            let grid = inverterData["grid_power"] as? Double
+                            let solar = inverterData["solar_power"] as? Double ?? inverterData["ppv"] as? Double
+                            let battery = inverterData["battery_power"] as? Double
+                            let capacity = inverterData["battery_capacity"] as? Double
+                            
+                            nested[key] = NestedInverterSOC(
+                                serialNumber: key,
+                                batterySoc: soc,
+                                gridPower: grid,
+                                solarPower: solar,
+                                batteryPower: battery,
+                                batteryCapacity: capacity
+                            )
+                        }
+                    }
+                    if !nested.isEmpty {
+                        nestedInverterData = nested
+                    }
+                }
+                
+                // Get serial number if available
+                inverterSerial = values["serial_number"] as? String
+            }
+        } catch {
+            print("⚠️ Failed to parse action values: \(error)")
+        }
+    }
+}
+
+// MARK: - Nested Inverter Data (for multi-inverter sites)
+struct NestedInverterSOC: Codable {
+    let serialNumber: String
+    let batterySoc: Double?
+    let gridPower: Double?
+    let solarPower: Double?
+    let batteryPower: Double?
+    let batteryCapacity: Double?
+}
+
+// MARK: - Lightweight SOC Point (for charting)
+struct ActionSOCPoint: Identifiable {
+    let id = UUID()
+    let time: Date
+    let soc: Double
+    let action: String
+    let buyPrice: Double
+    let sellPrice: Double
+    let inverterId: Int
+    let inverterSerial: String?
+    
+    init(from action: InverterAction) {
+        self.time = action.date ?? Date()
+        self.soc = action.batterySoc ?? 0
+        self.action = action.action
+        self.buyPrice = action.buyPrice ?? 0
+        self.sellPrice = action.sellPrice ?? 0
+        self.inverterId = action.inverterId
+        self.inverterSerial = action.inverterSerial
+    }
+}
+
+// MARK: - Site Actions (combined view for multi-inverter)
+struct SiteActionsData {
+    let siteId: Int
+    let date: Date
+    let inverterActions: [Int: [InverterAction]]  // Keyed by inverterId
+    
+    // Combined timeline (all inverters merged by time)
+    var combinedTimeline: [Date: [InverterAction]] {
+        var timeline: [Date: [InverterAction]] = [:]
+        for (_, actions) in inverterActions {
+            for action in actions {
+                if let date = action.date {
+                    // Round to nearest 5 minutes for alignment
+                    let rounded = date.rounded(toNearest: 300)
+                    if timeline[rounded] == nil {
+                        timeline[rounded] = []
+                    }
+                    timeline[rounded]?.append(action)
+                }
+            }
+        }
+        return timeline
+    }
+    
+    // Weighted average SOC across all inverters at each time point
+    func combinedSOC(capacities: [Int: Double]) -> [ActionSOCPoint] {
+        var points: [ActionSOCPoint] = []
+        
+        for (time, actions) in combinedTimeline.sorted(by: { $0.key < $1.key }) {
+            var totalCapacity: Double = 0
+            var weightedSOC: Double = 0
+            
+            for action in actions {
+                let capacity = capacities[action.inverterId] ?? 50.0  // Default 50kWh
+                if let soc = action.batterySoc {
+                    weightedSOC += soc * capacity
+                    totalCapacity += capacity
+                }
+            }
+            
+            if totalCapacity > 0 {
+                let avgSOC = weightedSOC / totalCapacity
+                let firstAction = actions[0]
+                points.append(ActionSOCPoint(
+                    from: InverterAction(
+                        id: firstAction.id,
+                        inverterId: firstAction.inverterId,
+                        action: firstAction.action,
+                        reason: firstAction.reason,
+                        time: firstAction.time,
+                        intervalTime: firstAction.intervalTime,
+                        createdAt: firstAction.createdAt,
+                        valuesJSON: nil
+                    )
+                ))
+            }
+        }
+        
+        return points
+    }
+}
+
+// MARK: - Fetch Configuration
+struct ActionsFetchConfig {
+    let inverterId: Int
+    let siteId: Int
+    let allInvertersAtSite: [Int]
+    let showAllInverters: Bool
+    let pageSize: Int
+    let date: Date
+    
+    init(inverterId: Int, siteId: Int, allInvertersAtSite: [Int], showAllInverters: Bool = false, pageSize: Int = 288, date: Date = Date()) {
+        self.inverterId = inverterId
+        self.siteId = siteId
+        self.allInvertersAtSite = allInvertersAtSite
+        self.showAllInverters = showAllInverters
+        self.pageSize = pageSize
+        self.date = date
+    }
+    
+    // Convenience for single inverter
+    static func single(inverterId: Int, siteId: Int, date: Date = Date()) -> ActionsFetchConfig {
+        ActionsFetchConfig(inverterId: inverterId, siteId: siteId, allInvertersAtSite: [inverterId], showAllInverters: false, date: date)
+    }
+    
+    // Convenience for all inverters at site
+    static func allAtSite(siteId: Int, inverterIds: [Int], date: Date = Date()) -> ActionsFetchConfig {
+        ActionsFetchConfig(inverterId: inverterIds.first ?? 0, siteId: siteId, allInvertersAtSite: inverterIds, showAllInverters: true, date: date)
+    }
+}
+
+// MARK: - Date Rounding Helper
+extension Date {
+    func rounded(toNearest seconds: TimeInterval) -> Date {
+        let rounded = (timeIntervalSince1970 / seconds).rounded() * seconds
+        return Date(timeIntervalSince1970: rounded)
+    }
+}
+
+// MARK: - Display Helpers
+extension InverterAction {
+    // Simplified action name for display
+    var displayAction: String {
+        let lower = action.lowercased()
+        if lower.contains("curtail") { return "Curtail" }
+        if lower.contains("export") { return "Export" }
+        if lower.contains("import") { return "Import" }
+        if lower.contains("charge") { return "Charge" }
+        if lower.contains("discharge") { return "Discharge" }
+        if lower.contains("auto") { return "Auto" }
+        return action
+    }
+    
+    // First line of reason (summary)
+    var reasonSummary: String {
+        let lines = reason.components(separatedBy: "\n")
+        guard let first = lines.first else { return reason }
+        // Truncate if too long
+        if first.count > 60 {
+            return String(first.prefix(57)) + "..."
+        }
+        return first
+    }
+    
+    // Full reason with line breaks preserved
+    var reasonFull: String {
+        reason
+    }
+    
+    // Time formatted for Brisbane
+    var displayTime: String {
+        guard let date = date else { return time }
+        let formatter = DateFormatter()
+        formatter.timeZone = powstonTimezone()
+        formatter.dateFormat = "h:mm a"
+        return formatter.string(from: date)
+    }
+    
+    // Date + time for full display
+    var displayDateTime: String {
+        guard let date = date else { return time }
+        let formatter = DateFormatter()
+        formatter.timeZone = powstonTimezone()
+        formatter.dateFormat = "MMM d, h:mm a"
+        return formatter.string(from: date)
+    }
+}
