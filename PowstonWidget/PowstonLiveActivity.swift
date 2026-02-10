@@ -49,6 +49,8 @@ struct PowstonLiveActivity: Widget {
             .widgetURL(URL(string: "powston://override"))
             .keylineTint(tintColor(for: context.state.status))
         }
+        .configurationDisplayName("Override Status")
+        .description("Track manual override progress")
     }
     
     // MARK: - Colors
@@ -82,16 +84,16 @@ struct LockScreenView: View {
             // Status icon
             ZStack {
                 Circle()
-                    .fill(statusColor.opacity(0.2))
+                    .fill(Color.white.opacity(0.2))
                     .frame(width: 50, height: 50)
                 
                 if context.state.status == .pending {
                     ProgressView()
-                        .tint(statusColor)
+                        .tint(.white)
                 } else {
                     Image(systemName: context.state.status.icon)
                         .font(.title2)
-                        .foregroundColor(statusColor)
+                        .foregroundColor(.white)
                 }
             }
             
@@ -101,41 +103,44 @@ struct LockScreenView: View {
                     Text(context.state.mode.uppercased())
                         .font(.headline)
                         .fontWeight(.bold)
+                        .foregroundColor(.white)
                     
                     Text("• \(context.state.status.displayName)")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.white.opacity(0.8))
                 }
                 
                 switch context.state.status {
                 case .pending:
                     Text("Waiting for confirmation...")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.white.opacity(0.8))
                     
                 case .scheduled:
-                    if let start = context.state.startTime {
+                    if context.state.startTime != nil {
                         Text("Starts \(context.state.formattedStartsIn)")
                             .font(.subheadline)
-                            .foregroundColor(.blue)
+                            .fontWeight(.medium)
+                            .foregroundColor(.white)
                     }
                     
                 case .active:
-                    if let end = context.state.endTime {
+                    if context.state.endTime != nil {
                         HStack(spacing: 8) {
                             Text(context.state.formattedRemaining + " remaining")
                                 .font(.subheadline)
-                                .foregroundColor(.orange)
+                                .fontWeight(.medium)
+                                .foregroundColor(.white)
                             
                             // Progress bar
                             GeometryReader { geo in
                                 ZStack(alignment: .leading) {
                                     RoundedRectangle(cornerRadius: 2)
-                                        .fill(Color.gray.opacity(0.3))
+                                        .fill(Color.white.opacity(0.3))
                                         .frame(height: 4)
                                     
                                     RoundedRectangle(cornerRadius: 2)
-                                        .fill(Color.orange)
+                                        .fill(Color.white)
                                         .frame(width: geo.size.width * context.state.progress, height: 4)
                                 }
                             }
@@ -146,27 +151,18 @@ struct LockScreenView: View {
                 case .completed, .cancelled:
                     Text(context.state.status == .completed ? "Override finished" : "Override cancelled")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.white.opacity(0.8))
                 }
                 
                 // Inverter count
                 Text("\(context.state.inverterCount) inverter\(context.state.inverterCount == 1 ? "" : "s") • \(context.attributes.siteName)")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.white.opacity(0.7))
             }
             
             Spacer()
         }
         .padding()
-    }
-    
-    var statusColor: Color {
-        switch context.state.status {
-        case .pending, .scheduled: return .blue
-        case .active: return .orange
-        case .completed: return .green
-        case .cancelled: return .red
-        }
     }
 }
 

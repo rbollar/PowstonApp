@@ -45,6 +45,9 @@ struct WatchContentView: View {
         }
         .sheet(isPresented: $showSettings) {
             WatchSettingsView()
+                .onDisappear {
+                    Task { await api.fetchData() }
+                }
         }
         .task {
             await api.fetchData()

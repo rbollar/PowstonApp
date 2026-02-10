@@ -97,7 +97,50 @@ extension InverterAction {
         self.solarPower = solarPower
         self.housePower = housePower
         self.batteryPower = batteryPower
-        self.inverterSerial = nil
-        self.nestedInverterData = nil
+
+        // Parse nestedInverterData from valuesJSON if available
+        // This is needed for multi-inverter sites to show per-inverter values
+        var serial: String? = nil
+        var nested: [String: NestedInverterSOC]? = nil
+
+        if let json = valuesJSON, let data = json.data(using: .utf8) {
+            do {
+                if let values = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    serial = values["serial_number"] as? String
+
+                    if let runtimeParams = values["runtime_params"] as? [String: Any] {
+                        var nestedDict: [String: NestedInverterSOC] = [:]
+                        for (key, value) in runtimeParams {
+                            // Keys starting with "A" and length > 8 are inverter serial numbers
+                            if key.hasPrefix("A") && key.count > 8,
+                               let inverterData = value as? [String: Any] {
+                                let soc = inverterData["battery_soc"] as? Double
+                                let grid = inverterData["grid_power"] as? Double
+                                let solar = inverterData["solar_power"] as? Double ?? inverterData["ppv"] as? Double
+                                let battery = inverterData["battery_power"] as? Double
+                                let capacity = inverterData["battery_capacity"] as? Double
+
+                                nestedDict[key] = NestedInverterSOC(
+                                    serialNumber: key,
+                                    batterySoc: soc,
+                                    gridPower: grid,
+                                    solarPower: solar,
+                                    batteryPower: battery,
+                                    batteryCapacity: capacity
+                                )
+                            }
+                        }
+                        if !nestedDict.isEmpty {
+                            nested = nestedDict
+                        }
+                    }
+                }
+            } catch {
+                // Ignore parsing errors - values will remain nil
+            }
+        }
+
+        self.inverterSerial = serial
+        self.nestedInverterData = nested
     }
 }

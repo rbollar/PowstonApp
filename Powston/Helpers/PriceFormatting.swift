@@ -24,6 +24,35 @@ struct PriceFormat {
         }
         return String(format: "%.2f¢", cents)
     }
+    
+    /// Format with full precision (no rounding) for detail views
+    /// Shows all available decimal places from the API
+    static func formatFull(_ cents: Double) -> String {
+        if abs(cents) >= 100 {
+            // For dollars, show 4 decimal places, trim trailing zeros but keep at least 2
+            let formatted = String(format: "$%.4f", cents / 100)
+            // Trim trailing zeros after the 2nd decimal place
+            let parts = formatted.split(separator: ".")
+            if parts.count == 2 {
+                let decimals = String(parts[1])
+                let trimmed = decimals.replacingOccurrences(of: "0+$", with: "", options: .regularExpression)
+                let finalDecimals = trimmed.count < 2 ? String(decimals.prefix(2)) : trimmed
+                return "\(parts[0]).\(finalDecimals)"
+            }
+            return formatted
+        }
+        
+        // For cents, show up to 4 decimal places, trim trailing zeros but keep at least 1
+        let formatted = String(format: "%.4f", cents)
+        let parts = formatted.split(separator: ".")
+        if parts.count == 2 {
+            let decimals = String(parts[1])
+            let trimmed = decimals.replacingOccurrences(of: "0+$", with: "", options: .regularExpression)
+            let finalDecimals = trimmed.isEmpty ? "0" : trimmed
+            return "\(parts[0]).\(finalDecimals)¢"
+        }
+        return "\(formatted)¢"
+    }
 }
 
 // MARK: - Price Colors
@@ -166,6 +195,22 @@ struct InlinePriceText: View {
 #Preview("Price Formatting") {
     ScrollView {
         VStack(spacing: 20) {
+            Text("formatFull() - Detail View Precision").font(.headline)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("8.0 → \(PriceFormat.formatFull(8.0))")
+                Text("8.5 → \(PriceFormat.formatFull(8.5))")
+                Text("8.12 → \(PriceFormat.formatFull(8.12))")
+                Text("8.123 → \(PriceFormat.formatFull(8.123))")
+                Text("8.1234 → \(PriceFormat.formatFull(8.1234))")
+                Text("8.12345 → \(PriceFormat.formatFull(8.12345))")
+                Text("-5.5 → \(PriceFormat.formatFull(-5.5))")
+                Text("150.0 → \(PriceFormat.formatFull(150.0))")
+                Text("150.1234 → \(PriceFormat.formatFull(150.1234))")
+            }
+            .font(.system(.body, design: .monospaced))
+            
+            Divider()
+            
             Text("Price Pills").font(.headline)
             HStack {
                 PricePillView(label: "Buy", cents: 8.5, isBuy: true)

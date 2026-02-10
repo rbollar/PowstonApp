@@ -186,7 +186,7 @@ struct BlockTimelineView: View {
                             // Solar
                             HStack(spacing: 2) {
                                 Image(systemName: "sun.max.fill")
-                                    .font(.system(size: 10))
+                                    .font(.caption)
                                     .foregroundColor(.yellow)
                                 Text(String(format: "%.1f", block.solarKw))
                                     .font(.system(size: 11, design: .monospaced))
@@ -195,7 +195,7 @@ struct BlockTimelineView: View {
                             // Home
                             HStack(spacing: 2) {
                                 Image(systemName: "house.fill")
-                                    .font(.system(size: 10))
+                                    .font(.caption)
                                     .foregroundColor(.purple)
                                 Text(String(format: "%.1f", block.homeKw))
                                     .font(.system(size: 11, design: .monospaced))
@@ -204,7 +204,7 @@ struct BlockTimelineView: View {
                             // Grid
                             HStack(spacing: 2) {
                                 Image(systemName: "bolt.fill")
-                                    .font(.system(size: 10))
+                                    .font(.caption)
                                     .foregroundColor(block.gridKw > 0 ? .blue : .green)
                                 Text(String(format: "%.1f", abs(block.gridKw)))
                                     .font(.system(size: 11, design: .monospaced))
@@ -223,7 +223,7 @@ struct BlockTimelineView: View {
                             .frame(height: 6)
                             
                             Text("\(Int(block.batterySoc))%")
-                                .font(.system(size: 9))
+                                .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
                         .padding(8)
@@ -307,10 +307,10 @@ struct ThreeSectionsView: View {
                                     .frame(width: 36, height: 36)
                                     .rotationEffect(.degrees(-90))
                                 Text("\(Int(batterySoc))")
-                                    .font(.system(size: 11, weight: .bold))
+                                    .font(.caption.weight(.bold))
                             }
                             Text("SOC")
-                                .font(.system(size: 9))
+                                .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -331,7 +331,7 @@ struct ThreeSectionsView: View {
                     ForEach(solarForecast.prefix(6), id: \.hour) { forecast in
                         VStack(spacing: 4) {
                             Text("\(forecast.hour):00")
-                                .font(.system(size: 9))
+                                .font(.caption2)
                                 .foregroundColor(.secondary)
                             
                             // Bar
@@ -343,7 +343,7 @@ struct ThreeSectionsView: View {
                                 .frame(width: 24, height: max(height, 4))
                             
                             Text(String(format: "%.0f", forecast.kw))
-                                .font(.system(size: 9))
+                                .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
                         .frame(maxWidth: .infinity)
@@ -431,7 +431,7 @@ struct ThreeSectionsView: View {
                 Text(value)
                     .font(.system(size: 14, weight: .semibold, design: .monospaced))
                 Text(unit)
-                    .font(.system(size: 9))
+                    .font(.caption2)
                     .foregroundColor(.secondary)
             }
         }
@@ -487,7 +487,7 @@ struct BatteryIcon: View {
                 // Charging bolt
                 if isCharging {
                     Image(systemName: "bolt.fill")
-                        .font(.system(size: 10))
+                        .font(.caption)
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }

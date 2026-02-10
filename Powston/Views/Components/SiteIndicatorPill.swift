@@ -48,23 +48,12 @@ struct SiteIndicatorPill: View {
         // Don't switch if already on this site
         guard site.id != api.selectedSite?.id else { return }
         
-        // Find lead inverter for this site (primary or first available)
-        let siteInverters = api.inverters.filter { $0.siteId == site.id }
-        let leadInverter = siteInverters.first(where: { $0.id == site.primaryInverterId }) 
-            ?? siteInverters.first
-        
-        guard let inverter = leadInverter else { return }
-        
-        // Update selection
-        api.selectedInverterId = inverter.id
-        api.clearMeterRecordsCache()
-        
-        // Notify views to refresh their data
-        NotificationCenter.default.post(name: .siteDidChange, object: site.id)
-        
-        // Fetch fresh data for new site
+        // Delegate to PowstonAPI's proper async method which:
+        // - Clears meter records cache
+        // - Finds correct lead inverter (override → detected → fallback)
+        // - Awaits fetchData() before posting notification
         Task {
-            await api.fetchData()
+            await api.switchToSite(site)
         }
     }
 }

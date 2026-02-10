@@ -11,6 +11,7 @@ import Charts
 struct SavingsBreakdownView: View {
     @EnvironmentObject var api: PowstonAPI
     @StateObject private var analysis = SavingsBreakdownAnalysis()
+    @State private var comparisonMode: PaybackComparisonMode = .flatRate
     
     var config: AnalysisConfig? {
         guard let site = api.selectedSite else { return nil }
@@ -106,28 +107,14 @@ struct SavingsBreakdownView: View {
     
     private func resultsView(_ result: SavingsBreakdownResult) -> some View {
         VStack(spacing: 20) {
-            // Summary Card
             summaryCard(result)
-            
-            // Savings Waterfall
             savingsWaterfallCard(result)
-            
-            // Solar Value
             solarValueCard(result)
-            
-            // Battery Value
             batteryValueCard(result)
-            
-            // Powston Value
             powstonValueCard(result)
-            
-            // Flat Rate Comparison
-            flatRateCard(result)
-            
-            // Battery Expansion
+            touVsFlatRateCard(result)
             expansionCard(result)
-            
-            // Footer
+            batteryROISettingsSection(currentCapacity: result.currentBatteryCapacity)
             footerView(result)
         }
     }
@@ -147,10 +134,10 @@ struct SavingsBreakdownView: View {
             
             Divider()
             
-            HStack(spacing: 20) {
+            HStack(spacing: 16) {
                 VStack(spacing: 4) {
-                    Text(formatCurrency(result.totalSavings))
-                        .font(.title.bold())
+                    Text(formatCurrencyRounded(result.totalSavings))
+                        .font(.title2.bold())
                         .foregroundColor(.green)
                     Text("Total Saved")
                         .font(.caption)
@@ -161,7 +148,7 @@ struct SavingsBreakdownView: View {
                 
                 VStack(spacing: 4) {
                     Text(formatCurrency(result.dailyAvgSavings))
-                        .font(.title2.bold())
+                        .font(.title3.bold())
                         .foregroundColor(.green)
                     Text("Per Day")
                         .font(.caption)
@@ -171,8 +158,8 @@ struct SavingsBreakdownView: View {
                 Spacer()
                 
                 VStack(spacing: 4) {
-                    Text(formatCurrency(result.gridOnlyCost))
-                        .font(.title2.bold())
+                    Text(formatCurrencyRounded(result.gridOnlyCost))
+                        .font(.title3.bold())
                         .foregroundColor(.secondary)
                     Text("Grid Only")
                         .font(.caption)
@@ -189,56 +176,26 @@ struct SavingsBreakdownView: View {
     
     private func savingsWaterfallCard(_ result: SavingsBreakdownResult) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Savings Breakdown")
-                .font(.headline)
+            HStack {
+                Text("Savings Breakdown")
+                    .font(.headline)
+                Spacer()
+                if result.usedDerivedData {
+                    Label("Estimated", systemImage: "info.circle")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+            }
             
             VStack(spacing: 8) {
-                waterfallRow(
-                    icon: "powerplug.fill",
-                    color: .gray,
-                    label: "Grid only baseline",
-                    value: result.gridOnlyCost,
-                    isCost: true
-                )
-                
-                waterfallRow(
-                    icon: "sun.max.fill",
-                    color: .yellow,
-                    label: result.solarSavings >= 0 ? "Solar savings" : "Solar cost",
-                    value: result.solarSavings,
-                    isCost: false
-                )
-                
-                waterfallRow(
-                    icon: "battery.100percent",
-                    color: .green,
-                    label: "Battery savings",
-                    value: result.batterySavings,
-                    isCost: false
-                )
-                
-                waterfallRow(
-                    icon: "brain.head.profile",
-                    color: .purple,
-                    label: result.powstonSavings >= 0 ? "Powston savings" : "Powston cost",
-                    value: result.powstonSavings,
-                    isCost: false
-                )
+                waterfallRow(icon: "powerplug.fill", color: .gray, label: "Grid only baseline", value: result.gridOnlyCost, valueColor: .secondary)
+                waterfallRow(icon: "sun.max.fill", color: .yellow, label: result.solarSavings >= 0 ? "Solar savings" : "Solar cost", value: abs(result.solarSavings), valueColor: result.solarSavings >= 0 ? .green : .red)
+                waterfallRow(icon: "battery.100percent", color: .green, label: result.batterySavings >= 0 ? "Battery savings" : "Battery cost", value: abs(result.batterySavings), valueColor: result.batterySavings >= 0 ? .green : .red)
+                waterfallRow(icon: "brain.head.profile", color: .purple, label: result.powstonSavings >= 0 ? "Powston savings" : "Powston cost", value: abs(result.powstonSavings), valueColor: result.powstonSavings >= 0 ? .green : .red)
                 
                 Divider()
                 
-                HStack {
-                    Image(systemName: result.actualCost <= 0 ? "checkmark.circle.fill" : "dollarsign.circle.fill")
-                        .foregroundColor(result.actualCost <= 0 ? .green : .orange)
-                        .frame(width: 24)
-                    Text(result.actualCost <= 0 ? "Actual benefit" : "Actual cost")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                    Spacer()
-                    Text(formatCurrency(result.actualCost))
-                        .font(.subheadline.monospacedDigit())
-                        .fontWeight(.medium)
-                }
+                waterfallRow(icon: "dollarsign.circle.fill", color: .orange, label: "Actual cost", value: result.actualCost, valueColor: .primary, bold: true)
             }
         }
         .padding()
@@ -246,23 +203,17 @@ struct SavingsBreakdownView: View {
         .cornerRadius(12)
     }
     
-    private func waterfallRow(icon: String, color: Color, label: String, value: Double, isCost: Bool) -> some View {
+    private func waterfallRow(icon: String, color: Color, label: String, value: Double, valueColor: Color, bold: Bool = false) -> some View {
         HStack {
             Image(systemName: icon)
                 .foregroundColor(color)
                 .frame(width: 24)
             Text(label)
-                .font(.subheadline)
+                .font(bold ? .subheadline.bold() : .subheadline)
             Spacer()
-            if isCost {
-                Text(formatCurrency(value))
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundColor(.secondary)
-            } else {
-                Text(formatSavings(value))
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundColor(value >= 0 ? .green : .red)
-            }
+            Text(formatCurrency(value))
+                .font(bold ? .subheadline.bold() : .subheadline)
+                .foregroundColor(valueColor)
         }
     }
     
@@ -271,36 +222,18 @@ struct SavingsBreakdownView: View {
     private func solarValueCard(_ result: SavingsBreakdownResult) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Image(systemName: "sun.max.fill")
-                    .foregroundColor(.yellow)
-                Text("Solar Value")
-                    .font(.headline)
+                Image(systemName: "sun.max.fill").foregroundColor(.yellow)
+                Text("Solar Value").font(.headline)
                 Spacer()
-                Text(formatSavings(result.solarSavings))
-                    .font(.headline)
-                    .foregroundColor(result.solarSavings >= 0 ? .green : .red)
+                Text(formatCurrency(result.solarSavings)).font(.headline).foregroundColor(.green)
             }
             
             Divider()
             
-            HStack(spacing: 20) {
-                metricView(
-                    value: String(format: "%.0f", result.totalPvGenerationKwh),
-                    unit: "kWh",
-                    label: "Generated"
-                )
-                
-                metricView(
-                    value: String(format: "%.0f%%", result.selfConsumptionPercent),
-                    unit: "",
-                    label: "Self-consumed"
-                )
-                
-                metricView(
-                    value: String(format: "%.1f¢", result.avgExportPrice),
-                    unit: "",
-                    label: "Avg export rate"
-                )
+            HStack {
+                metricView(value: String(format: "%.0f", result.totalPvGenerationKwh), unit: "kWh", label: "Generated")
+                metricView(value: String(format: "%.0f%%", result.selfConsumptionPercent), unit: "", label: "Self-consumed")
+                metricView(value: String(format: "%.1f¢", result.avgExportPrice), unit: "", label: "Avg export rate")
             }
         }
         .padding()
@@ -313,36 +246,18 @@ struct SavingsBreakdownView: View {
     private func batteryValueCard(_ result: SavingsBreakdownResult) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Image(systemName: "battery.100percent")
-                    .foregroundColor(.green)
-                Text("Battery Value")
-                    .font(.headline)
+                Image(systemName: "battery.100percent").foregroundColor(.green)
+                Text("Battery Value").font(.headline)
                 Spacer()
-                Text(formatSavings(result.batterySavings))
-                    .font(.headline)
-                    .foregroundColor(.green)
+                Text(formatCurrency(result.batterySavings)).font(.headline).foregroundColor(result.batterySavings >= 0 ? .green : .red)
             }
             
             Divider()
             
-            HStack(spacing: 20) {
-                metricView(
-                    value: String(format: "%.0f", result.currentBatteryCapacity),
-                    unit: "kWh",
-                    label: "Capacity"
-                )
-                
-                metricView(
-                    value: String(format: "%.0f%%", result.batteryUtilizationPercent),
-                    unit: "",
-                    label: "Utilization"
-                )
-                
-                metricView(
-                    value: String(format: "$%.2f", result.batterySavings / 60),
-                    unit: "/day",
-                    label: "Avg savings"
-                )
+            HStack {
+                metricView(value: String(format: "%.0f", result.currentBatteryCapacity), unit: "kWh", label: "Capacity")
+                metricView(value: String(format: "%.0f%%", result.batteryUtilizationPercent), unit: "", label: "Utilization")
+                metricView(value: String(format: "%.1f¢", result.avgImportPrice), unit: "", label: "Avg import rate")
             }
         }
         .padding()
@@ -355,46 +270,18 @@ struct SavingsBreakdownView: View {
     private func powstonValueCard(_ result: SavingsBreakdownResult) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Image(systemName: "brain.head.profile")
-                    .foregroundColor(.purple)
-                Text("Powston Optimization")
-                    .font(.headline)
+                Image(systemName: "brain.head.profile").foregroundColor(.purple)
+                Text("Powston Value").font(.headline)
                 Spacer()
-                Text(formatSavings(result.powstonSavings))
-                    .font(.headline)
-                    .foregroundColor(result.powstonSavings >= 0 ? .green : .red)
+                Text(formatCurrency(result.powstonSavings)).font(.headline).foregroundColor(result.powstonSavings >= 0 ? .green : .red)
             }
             
             Divider()
             
-            if result.powstonSavings >= 0 {
-                Text("Powston's intelligent trading beat a simple self-consumption strategy by \(formatCurrency(result.powstonSavings)) over 60 days.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            } else {
-                Text("A simple self-consumption strategy would have saved \(formatCurrency(abs(result.powstonSavings))) more over 60 days. This can happen when price forecasts don't match actual prices.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            
-            HStack(spacing: 20) {
-                metricView(
-                    value: String(format: "$%.2f", result.dailyAvgPowstonValue),
-                    unit: "/day",
-                    label: result.powstonSavings >= 0 ? "Avg benefit" : "Avg cost"
-                )
-                
-                metricView(
-                    value: String(format: "%.1f¢", result.avgImportPrice),
-                    unit: "",
-                    label: "Avg buy rate"
-                )
-                
-                metricView(
-                    value: String(format: "%.1f¢", result.avgExportPrice),
-                    unit: "",
-                    label: "Avg sell rate"
-                )
+            HStack {
+                metricView(value: formatCurrency(result.dailyAvgPowstonValue), unit: "", label: "Daily avg")
+                metricView(value: formatCurrency(result.powstonSavings * (365.0 / Double(result.periodDays))), unit: "", label: "Annual (proj)")
+                metricView(value: String(format: "%.0f%%", result.powstonSavings / max(1, result.totalSavings) * 100), unit: "", label: "% of total")
             }
         }
         .padding()
@@ -402,49 +289,39 @@ struct SavingsBreakdownView: View {
         .cornerRadius(12)
     }
     
-    // MARK: - Flat Rate Card
+    // MARK: - TOU vs Flat Rate Card
     
-    private func flatRateCard(_ result: SavingsBreakdownResult) -> some View {
+    private func touVsFlatRateCard(_ result: SavingsBreakdownResult) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Image(systemName: "equal.circle.fill")
-                    .foregroundColor(.blue)
-                Text("Flat Rate Comparison")
-                    .font(.headline)
+                Image(systemName: "chart.bar.fill").foregroundColor(.blue)
+                Text("ToU vs Flat Rate").font(.headline)
                 Spacer()
             }
             
-            Divider()
+            let touSavings = result.flatRateSavings
             
-            HStack {
-                Text("At \(Int(result.flatBuyRate))¢ buy / \(Int(result.flatSellRate))¢ sell:")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                Spacer()
-                Text(formatCurrency(result.flatRateCost))
-                    .font(.subheadline.monospacedDigit())
-            }
-            
-            if result.flatRateSavings > 0.01 {
+            if touSavings > 0 {
                 HStack {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
-                    Text("You beat flat rate by \(formatCurrency(result.flatRateSavings))")
-                        .font(.subheadline)
-                        .foregroundColor(.green)
+                    Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
+                    Text("ToU pricing saved you ").font(.subheadline) +
+                    Text(formatCurrency(touSavings)).font(.subheadline.bold()).foregroundColor(.green) +
+                    Text(" vs flat rate").font(.subheadline)
                 }
-            } else if result.flatRateSavings < -0.01 {
+            } else {
                 HStack {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                    Text("Flat rate would save \(formatCurrency(abs(result.flatRateSavings)))")
-                        .font(.subheadline)
-                        .foregroundColor(.orange)
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
+                    Text("Flat rate would have saved ").font(.subheadline) +
+                    Text(formatCurrency(abs(touSavings))).font(.subheadline.bold()).foregroundColor(.orange)
                 }
             }
+            
+            Text("Compared to \(String(format: "%.0f¢", result.flatBuyRate)) buy / \(String(format: "%.0f¢", result.flatSellRate)) sell flat tariff")
+                .font(.caption)
+                .foregroundColor(.secondary)
             
             Text("Adjust comparison rates in Settings → Leaderboard")
-                .font(.caption)
+                .font(.caption2)
                 .foregroundColor(.secondary)
         }
         .padding()
@@ -452,15 +329,13 @@ struct SavingsBreakdownView: View {
         .cornerRadius(12)
     }
     
-    // MARK: - Expansion Card
+    // MARK: - Battery Expansion Card
     
     private func expansionCard(_ result: SavingsBreakdownResult) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Image(systemName: "plus.circle.fill")
-                    .foregroundColor(.cyan)
-                Text("Battery Expansion Analysis")
-                    .font(.headline)
+                Image(systemName: "plus.circle.fill").foregroundColor(.green)
+                Text("Battery Expansion Analysis").font(.headline)
                 Spacer()
             }
             
@@ -470,100 +345,270 @@ struct SavingsBreakdownView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
             
-            // Chart
             if #available(iOS 16.0, *) {
                 expansionChart(result.expansionAnalysis, currentCapacity: result.currentBatteryCapacity)
-                    .frame(height: 200)
+                    .frame(height: 180)
+                
+                HStack(spacing: 16) {
+                    HStack(spacing: 4) {
+                        RoundedRectangle(cornerRadius: 1).stroke(Color.cyan, style: StrokeStyle(lineWidth: 2, dash: [4, 2])).frame(width: 20, height: 2)
+                        Text("Battery Only").font(.caption2)
+                    }
+                    HStack(spacing: 4) {
+                        Rectangle().fill(Color.pink).frame(width: 20, height: 2)
+                        Text("With Powston").font(.caption2)
+                    }
+                }.foregroundColor(.secondary).padding(.bottom, 4)
             }
             
-            // Table of key points
+            // Comparison mode picker with explanation
+            VStack(spacing: 4) {
+                Text("Compare payback against:")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                
+                Picker("Compare against", selection: $comparisonMode) {
+                    ForEach(PaybackComparisonMode.allCases, id: \.self) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                
+                // Mode explanation
+                Group {
+                    if comparisonMode == .flatRate {
+                        Text("Is battery + TOU worth it vs staying on flat rate with solar?")
+                    } else {
+                        Text("How much does the battery save vs solar-only on TOU?")
+                    }
+                }
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 2)
+            }
+            .padding(.vertical, 4)
+            
+            // Table header
             VStack(spacing: 8) {
+                // Main headers
                 HStack {
                     Text("Capacity")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .frame(width: 70, alignment: .leading)
-                    Text("Daily Cost")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .frame(width: 80, alignment: .trailing)
-                    Text("Marginal")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .frame(width: 70, alignment: .trailing)
-                    Text("$/kWh/day")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .frame(width: 60, alignment: .leading)
+                    Text("Daily")
+                        .frame(width: 45, alignment: .trailing)
+                    Text("Payback Years")
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
+                .font(.caption)
+                .fontWeight(.medium)
                 .foregroundColor(.secondary)
                 
-                ForEach(result.expansionAnalysis.filter { point in
-                    point.capacityKwh.truncatingRemainder(dividingBy: 50) == 0 || point.isCurrentCapacity
-                }) { point in
-                    HStack {
-                        HStack(spacing: 4) {
-                            if point.isCurrentCapacity {
-                                Image(systemName: "arrow.right")
-                                    .font(.caption2)
-                                    .foregroundColor(.green)
-                            }
-                            Text("\(Int(point.capacityKwh)) kWh")
-                                .font(.caption.monospacedDigit())
-                        }
-                        .frame(width: 70, alignment: .leading)
-                        .foregroundColor(point.isCurrentCapacity ? .green : .primary)
-                        
-                        Text(formatCurrency(point.dailyCost))
-                            .font(.caption.monospacedDigit())
-                            .frame(width: 80, alignment: .trailing)
-                        
-                        Text(point.marginalSavings > 0 ? "-\(formatCurrency(point.marginalSavings / 60))" : "—")
-                            .font(.caption.monospacedDigit())
-                            .foregroundColor(.green)
-                            .frame(width: 70, alignment: .trailing)
-                        
-                        Text(point.savingsPerAddedKwh > 0.001 ? String(format: "%.2f¢", point.savingsPerAddedKwh * 100) : "—")
-                            .font(.caption.monospacedDigit())
-                            .foregroundColor(.secondary)
+                // Sub-headers for payback
+                HStack {
+                    Spacer().frame(width: 60)
+                    Spacer().frame(width: 45)
+                    HStack(spacing: 0) {
+                        Text("Battery Only")
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                        Text("With Powston")
                             .frame(maxWidth: .infinity, alignment: .trailing)
                     }
                 }
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                
+                // Data rows
+                ForEach(result.expansionAnalysis) { point in
+                    HStack {
+                        HStack(spacing: 2) {
+                            if point.isCurrentCapacity {
+                                Image(systemName: "arrow.right").font(.caption2).foregroundColor(.green)
+                            }
+                            Text("\(Int(point.capacityKwh))")
+                        }
+                        .frame(width: 60, alignment: .leading)
+                        .foregroundColor(point.isCurrentCapacity ? .green : .primary)
+                        
+                        Text(formatCurrency(abs(point.powstonDailyCost)))
+                            .frame(width: 45, alignment: .trailing)
+                        
+                        HStack(spacing: 0) {
+                            // Battery Only payback (based on mode)
+                            let batteryPayback = comparisonMode == .flatRate ? point.paybackYearsFlatRate : point.paybackYears
+                            Text(batteryPayback.map { String(format: "%.0fy", $0) } ?? "—")
+                                .foregroundColor(point.isCurrentCapacity ? .green : .primary)
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                            
+                            // With Powston payback (based on mode) - show range if spikes exist
+                            let powstonPayback = comparisonMode == .flatRate ? point.powstonPaybackYearsFlatRate : point.powstonPaybackYears
+                            let powstonWithSpikes = comparisonMode == .flatRate ? point.powstonPaybackWithSpikesYearsFlatRate : point.powstonPaybackWithSpikesYears
+                            
+                            if let payback = powstonPayback,
+                               let withSpikes = powstonWithSpikes,
+                               withSpikes < payback - 0.5 {
+                                Text("\(String(format: "%.0f", withSpikes))-\(String(format: "%.0fy", payback))")
+                                    .foregroundColor(point.isCurrentCapacity ? .green : .primary)
+                                    .frame(maxWidth: .infinity, alignment: .trailing)
+                            } else {
+                                Text(powstonPayback.map { String(format: "%.0fy", $0) } ?? "—")
+                                    .foregroundColor(point.isCurrentCapacity ? .green : .primary)
+                                    .frame(maxWidth: .infinity, alignment: .trailing)
+                            }
+                        }
+                    }
+                    .font(.caption.monospacedDigit())
+                }
             }
             
-            Text("Marginal savings decrease as capacity increases — the first kWh saves more than the last.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .padding(.top, 4)
+            // Powston improvement callout (use mode-appropriate values)
+            if let current = result.expansionAnalysis.first(where: { $0.isCurrentCapacity }) {
+                let dumbPayback = comparisonMode == .flatRate ? current.paybackYearsFlatRate : current.paybackYears
+                let powstonPayback = comparisonMode == .flatRate ? current.powstonPaybackYearsFlatRate : current.powstonPaybackYears
+                
+                if let dumb = dumbPayback, let powston = powstonPayback, dumb > powston {
+                    let improvement = ((dumb - powston) / dumb) * 100
+                    HStack(spacing: 8) {
+                        Image(systemName: "bolt.fill").foregroundColor(.green)
+                        Text("Powston improves payback by \(String(format: "%.0f%%", improvement))").font(.caption).fontWeight(.medium)
+                        Spacer()
+                    }
+                    .padding(8).background(Color.green.opacity(0.1)).cornerRadius(8)
+                }
+            }
+            
+            // Exceptional days callout - only show for TOU mode (spikes need TOU to capture)
+            if result.exceptionalDaysCount > 0 && comparisonMode == .tou {
+                HStack(spacing: 8) {
+                    Image(systemName: "chart.line.uptrend.xyaxis").foregroundColor(.orange)
+                    Text("\(result.exceptionalDaysCount) spike days totaled \(formatCurrencyRounded(result.exceptionalDaysTotal)). If recurring, Powston payback shortens to lower range.")
+                        .font(.caption)
+                    Spacer()
+                }
+                .padding(8).background(Color.orange.opacity(0.1)).cornerRadius(8)
+            }
+            
+            Text(expansionAssumptionsText(forCapacity: result.currentBatteryCapacity)).font(.caption2).foregroundColor(.gray).padding(.top, 4)
         }
         .padding()
         .background(Color(.secondarySystemBackground))
         .cornerRadius(12)
     }
     
+    private func expansionAssumptionsText(forCapacity currentCapacity: Double) -> String {
+        let costPerKwh = UserDefaults.standard.double(forKey: "battery_cost_per_kwh")
+        let cost = costPerKwh > 0 ? costPerKwh : 800.0
+        var text = "Assumes $\(Int(cost))/kWh installed."
+        
+        let claimedRebate = UserDefaults.standard.bool(forKey: "stc_rebate_claimed")
+        if claimedRebate {
+            let addedKwh = UserDefaults.standard.double(forKey: "stc_rebate_kwh")
+            let year = UserDefaults.standard.integer(forKey: "stc_rebate_year")
+            if addedKwh > 0 && year >= 2025 {
+                text += String(format: " Includes STC rebate on %.0f kWh (%d).", addedKwh, year)
+            }
+        }
+        return text
+    }
+    
+    // MARK: - Battery ROI Settings
+    
+    private func batteryROISettingsSection(currentCapacity: Double) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "gearshape.fill").foregroundColor(.gray)
+                Text("Payback Assumptions").font(.headline)
+                Spacer()
+            }
+            Divider()
+            
+            HStack {
+                Text("Battery cost")
+                Spacer()
+                TextField("$/kWh", value: Binding(
+                    get: { let s = UserDefaults.standard.double(forKey: "battery_cost_per_kwh"); return s > 0 ? s : 800.0 },
+                    set: { UserDefaults.standard.set($0, forKey: "battery_cost_per_kwh") }
+                ), format: .number)
+                .keyboardType(.decimalPad).multilineTextAlignment(.trailing).frame(width: 80)
+                Text("$/kWh").foregroundColor(.secondary)
+            }
+            
+            Divider()
+            stcRebateSection(currentCapacity: currentCapacity)
+            Text("Changes apply on next refresh.").font(.caption).foregroundColor(.secondary)
+        }
+        .padding()
+        .background(Color(.secondarySystemBackground))
+        .cornerRadius(12)
+    }
+    
+    // MARK: - STC Rebate Section
+    
+    private func stcRebateSection(currentCapacity: Double) -> some View {
+        let claimedRebate = Binding(
+            get: { UserDefaults.standard.bool(forKey: "stc_rebate_claimed") },
+            set: { UserDefaults.standard.set($0, forKey: "stc_rebate_claimed") }
+        )
+        let addedKwh = Binding(
+            get: { let s = UserDefaults.standard.double(forKey: "stc_rebate_kwh"); return s > 0 ? s : 0.0 },
+            set: { UserDefaults.standard.set($0, forKey: "stc_rebate_kwh") }
+        )
+        let yearClaimed = Binding(
+            get: { let s = UserDefaults.standard.integer(forKey: "stc_rebate_year"); return s >= 2025 ? s : 2025 },
+            set: { UserDefaults.standard.set($0, forKey: "stc_rebate_year") }
+        )
+        
+        return VStack(alignment: .leading, spacing: 8) {
+            Toggle(isOn: Binding(
+                get: { UserDefaults.standard.bool(forKey: "stc_rebate_claimed") },
+                set: {
+                    UserDefaults.standard.set($0, forKey: "stc_rebate_claimed")
+                    // Set default year if not already set
+                    if $0 && UserDefaults.standard.integer(forKey: "stc_rebate_year") < 2025 {
+                        UserDefaults.standard.set(2025, forKey: "stc_rebate_year")
+                    }
+                }
+            )) {
+                Text("I've already claimed STC rebate")
+            }
+            
+            if claimedRebate.wrappedValue {
+                HStack {
+                    Text("Battery added")
+                    Spacer()
+                    TextField("kWh", value: addedKwh, format: .number).keyboardType(.decimalPad).multilineTextAlignment(.trailing).frame(width: 60)
+                    Text("kWh").foregroundColor(.secondary)
+                }.padding(.leading, 8)
+                
+                HStack {
+                    Text("Year claimed")
+                    Spacer()
+                    Picker("Year", selection: yearClaimed) {
+                        ForEach(2025...2030, id: \.self) { year in Text(String(year)).tag(year) }
+                    }.pickerStyle(.menu)
+                }.padding(.leading, 8)
+            }
+            
+            Link("About the Cheaper Home Batteries program", destination: URL(string: "https://www.dcceew.gov.au/energy/programs/cheaper-home-batteries")!).font(.caption)
+        }
+    }
+    
     @available(iOS 16.0, *)
     private func expansionChart(_ points: [BatteryExpansionPoint], currentCapacity: Double) -> some View {
         Chart {
             ForEach(points) { point in
-                LineMark(
-                    x: .value("Capacity", point.capacityKwh),
-                    y: .value("Daily Cost", point.dailyCost)
-                )
-                .foregroundStyle(Color.cyan)
-                
-                if point.isCurrentCapacity {
-                    PointMark(
-                        x: .value("Capacity", point.capacityKwh),
-                        y: .value("Daily Cost", point.dailyCost)
-                    )
-                    .foregroundStyle(Color.green)
-                    .symbolSize(100)
-                    .annotation(position: .top) {
-                        Text("You")
-                            .font(.caption2)
-                            .foregroundColor(.green)
-                    }
-                }
+                LineMark(x: .value("Capacity", point.capacityKwh), y: .value("Dumb Cost", point.dailyCost), series: .value("Type", "Battery Only"))
+                    .foregroundStyle(Color.cyan).lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 3]))
+            }
+            ForEach(points) { point in
+                LineMark(x: .value("Capacity", point.capacityKwh), y: .value("Powston Cost", point.powstonDailyCost), series: .value("Type", "With Powston"))
+                    .foregroundStyle(Color.pink).lineStyle(StrokeStyle(lineWidth: 2))
+            }
+            if let current = points.first(where: { $0.isCurrentCapacity }) {
+                PointMark(x: .value("Capacity", current.capacityKwh), y: .value("Cost", current.powstonDailyCost))
+                    .foregroundStyle(Color.green).symbolSize(100)
+                    .annotation(position: .top) { Text("You").font(.caption2).foregroundColor(.green) }
             }
         }
         .chartXAxisLabel("Battery Capacity (kWh)")
@@ -575,16 +620,10 @@ struct SavingsBreakdownView: View {
     private func footerView(_ result: SavingsBreakdownResult) -> some View {
         VStack(spacing: 8) {
             Button(action: runAnalysis) {
-                Label("Refresh Analysis", systemImage: "arrow.clockwise")
-                    .font(.subheadline)
-            }
-            .buttonStyle(.bordered)
-            
-            Text("Analysis based on \(result.periodDays) days of meter data")
-                .font(.caption)
-                .foregroundColor(.secondary)
-        }
-        .padding(.top)
+                Label("Refresh Analysis", systemImage: "arrow.clockwise").font(.subheadline)
+            }.buttonStyle(.bordered)
+            Text("Analysis based on \(result.periodDays) days of meter data").font(.caption).foregroundColor(.secondary)
+        }.padding(.top)
     }
     
     // MARK: - Helpers
@@ -592,42 +631,33 @@ struct SavingsBreakdownView: View {
     private func metricView(value: String, unit: String, label: String) -> some View {
         VStack(spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text(value)
-                    .font(.subheadline.bold())
-                if !unit.isEmpty {
-                    Text(unit)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+                Text(value).font(.subheadline.bold())
+                if !unit.isEmpty { Text(unit).font(.caption).foregroundColor(.secondary) }
             }
-            Text(label)
-                .font(.caption2)
-                .foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity)
+            Text(label).font(.caption2).foregroundColor(.secondary)
+        }.frame(maxWidth: .infinity)
     }
     
-    private func formatCurrency(_ value: Double) -> String {
-        String(format: "$%.2f", abs(value))
-    }
+    private static let currencyFormatter: NumberFormatter = {
+        let f = NumberFormatter(); f.numberStyle = .currency; f.currencySymbol = "$"; f.maximumFractionDigits = 2; f.minimumFractionDigits = 2; return f
+    }()
     
-    private func formatSavings(_ value: Double) -> String {
-        if value >= 0 {
-            return String(format: "-$%.2f", value)
-        } else {
-            return String(format: "+$%.2f", abs(value))
-        }
-    }
+    private static let currencyRoundedFormatter: NumberFormatter = {
+        let f = NumberFormatter(); f.numberStyle = .currency; f.currencySymbol = "$"; f.maximumFractionDigits = 0; f.minimumFractionDigits = 0; return f
+    }()
+    
+    private func formatCurrency(_ value: Double) -> String { Self.currencyFormatter.string(from: NSNumber(value: abs(value))) ?? "$0.00" }
+    private func formatCurrencyRounded(_ value: Double) -> String { Self.currencyRoundedFormatter.string(from: NSNumber(value: abs(value))) ?? "$0" }
     
     private func loadCachedOrRun() {
-        if let config = config, let cached = analysis.getCachedResult(config: config) {
-            analysis.result = cached
-        }
+        if let config = config, let cached = analysis.getCachedResult(config: config) { analysis.result = cached }
     }
     
     private func runAnalysis() {
         guard let config = config else { return }
         Task {
+            // Refresh data availability before analysis
+            await api.refreshLatestCompleteDataDate()
             await analysis.runAnalysis(api: api, config: config)
         }
     }
@@ -635,7 +665,6 @@ struct SavingsBreakdownView: View {
 
 #Preview {
     NavigationStack {
-        SavingsBreakdownView()
-            .environmentObject(PowstonAPI())
+        SavingsBreakdownView().environmentObject(PowstonAPI())
     }
 }

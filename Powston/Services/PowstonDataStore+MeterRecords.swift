@@ -94,6 +94,25 @@ extension PowstonDataStore {
         }
     }
     
+    /// Get the most recent meter record date for a site
+    func getMostRecentMeterRecordDate(siteId: Int) -> Date? {
+        guard let db = dbQueue else { return nil }
+        
+        do {
+            return try db.read { db in
+                let row = try Row.fetchOne(
+                    db,
+                    sql: "SELECT MAX(interval_time) as latest FROM meter_records WHERE site_id = ?",
+                    arguments: [siteId]
+                )
+                return row?["latest"] as? Date
+            }
+        } catch {
+            print("❌ getMostRecentMeterRecordDate failed: \(error)")
+            return nil
+        }
+    }
+    
     // MARK: - Save Operations
     
     /// Save meter records to SQLite

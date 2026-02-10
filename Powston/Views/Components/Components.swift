@@ -25,6 +25,8 @@ struct PowerItem: View {
                 .foregroundColor(.secondary)
         }
         .frame(minWidth: 70)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label): \(value) \(unit)")
     }
 }
 
@@ -55,6 +57,8 @@ struct PriceCard: View {
         .background(Color(.systemBackground).opacity(0.95))
         .cornerRadius(12)
         .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title) price: \(price) \(subtitle)")
     }
 }
 
@@ -83,6 +87,8 @@ struct SummaryCard: View {
         .background(Color(.systemBackground))
         .cornerRadius(12)
         .shadow(color: .black.opacity(0.05), radius: 2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title): \(value)")
     }
 }
 
@@ -116,6 +122,8 @@ struct EnergySummaryCard: View {
         .background(Color(.systemBackground))
         .cornerRadius(12)
         .shadow(color: .black.opacity(0.05), radius: 2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Energy \(title): \(value)")
     }
 }
 
@@ -135,6 +143,8 @@ struct MiniStat: View {
                 .fontWeight(.medium)
                 .foregroundColor(color)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label): \(value)")
     }
 }
 
@@ -151,7 +161,7 @@ struct DetailStat: View {
                 .fontWeight(.semibold)
                 .foregroundColor(color)
             Text(label)
-                .font(.system(size: 9))
+                .font(.caption2)
                 .foregroundColor(.secondary)
         }
     }
@@ -293,6 +303,9 @@ struct ModeButton: View {
             )
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(mode.displayName) mode")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+        .accessibilityHint(isSelected ? "Currently selected" : "Double tap to select")
     }
 }
 
@@ -314,6 +327,8 @@ struct DurationChip: View {
                 .cornerRadius(20)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Duration: \(label)")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 }
 

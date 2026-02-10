@@ -11,12 +11,15 @@ import SwiftUI
 struct P2PContractEntryView: View {
     @EnvironmentObject var api: PowstonAPI
     @Environment(\.dismiss) var dismiss
-    
+
     // Edit mode: pass existing contract to edit
     var existingContract: P2PContract?
+    var defaultDirection: P2PTradeDirection = .sell
     var onSave: ((P2PContract) -> Void)?
-    
+
     // Form state
+    @State private var direction: P2PTradeDirection = .sell
+    @State private var didSetInitialDirection = false
     @State private var startDate = Date()
     @State private var endDate = Date().addingTimeInterval(6 * 86400) // Default 7 days
     @State private var startHour = 17
@@ -27,12 +30,16 @@ struct P2PContractEntryView: View {
     @State private var notes: String = ""
     @State private var isActive = true
     
-    // Tier management
+    // Tier management (for Sell contracts)
     @State private var tierEntries: [TierEntry] = [
         TierEntry(percentage: "40", priceCents: "20"),
         TierEntry(percentage: "35", priceCents: "25"),
         TierEntry(percentage: "25", priceCents: "30")
     ]
+
+    // Buy contract pricing (simpler - one initial price, optional second)
+    @State private var buyPriceCents: String = "8"      // Initial price cap
+    @State private var buySecondPriceCents: String = "" // Optional second price for future matching
     
     @State private var showSaveError = false
     @State private var saveErrorMessage = ""
@@ -51,7 +58,14 @@ struct P2PContractEntryView: View {
                 dateSection
                 hoursSection
                 volumeSection
-                tiersSection
+
+                // Different pricing sections for Sell vs Buy
+                if direction == .sell {
+                    tiersSection
+                } else {
+                    buyPricingSection
+                }
+
                 renewalSection
                 notesSection
                 
@@ -61,7 +75,7 @@ struct P2PContractEntryView: View {
                 
                 summarySection
             }
-            .navigationTitle(existingContract != nil ? "Edit Contract" : "New Contract")
+            .navigationTitle(existingContract != nil ? "Edit \(direction.displayName) Contract" : "New \(direction.displayName) Contract")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -78,12 +92,24 @@ struct P2PContractEntryView: View {
             } message: {
                 Text(saveErrorMessage)
             }
-            .onAppear { loadExistingContract() }
+            .onAppear {
+                loadExistingContract()
+                // Set default direction for new contracts
+                if existingContract == nil && !didSetInitialDirection {
+                    direction = defaultDirection
+                    // Update hours based on direction
+                    if defaultDirection == .buy {
+                        startHour = 10
+                        endHour = 16
+                    }
+                    didSetInitialDirection = true
+                }
+            }
         }
     }
     
     // MARK: - Date Section
-    
+
     private var dateSection: some View {
         Section("Contract Period") {
             DatePicker("Start Date", selection: $startDate, displayedComponents: .date)
@@ -183,7 +209,64 @@ struct P2PContractEntryView: View {
             Text("Each tier: percentage of total volume at a fixed price. Lower tiers fill first.")
         }
     }
-    
+
+    // MARK: - Buy Pricing Section
+
+    private var buyPricingSection: some View {
+        Section {
+            // Initial price cap - matches against existing sell offers
+            HStack {
+                Text("Price Cap")
+                Spacer()
+                HStack(spacing: 4) {
+                    TextField("¢", text: $buyPriceCents)
+                        .keyboardType(.decimalPad)
+                        .frame(width: 50)
+                        .multilineTextAlignment(.trailing)
+                    Text("¢/kWh")
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            // Explanation
+            HStack(spacing: 8) {
+                Image(systemName: "info.circle")
+                    .foregroundColor(.orange)
+                Text("Matches existing sell offers at or below this price")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            // Optional second price for future matching
+            HStack {
+                Text("Second Price")
+                Spacer()
+                HStack(spacing: 4) {
+                    TextField("Optional", text: $buySecondPriceCents)
+                        .keyboardType(.decimalPad)
+                        .frame(width: 50)
+                        .multilineTextAlignment(.trailing)
+                    Text("¢/kWh")
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            if !buySecondPriceCents.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "clock")
+                        .foregroundColor(.blue)
+                    Text("Second price waits for future sell offers")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+        } header: {
+            Text("Buy Pricing")
+        } footer: {
+            Text("Enter a price cap to match existing sellers. Add a second price to catch future offers.")
+        }
+    }
+
     private func tierRow(entry: Binding<TierEntry>) -> some View {
         HStack(spacing: 12) {
             HStack(spacing: 4) {
@@ -262,34 +345,73 @@ struct P2PContractEntryView: View {
         Section("Summary") {
             if let total = Double(totalVolumeKwh), total > 0 {
                 let tiers = buildTiers()
-                let revenue = tiers.reduce(0) { $0 + $1.estimatedRevenue }
-                let blended = total > 0 ? (revenue / total) * 100 : 0
-                
-                HStack {
-                    Text("Estimated Revenue")
-                    Spacer()
-                    Text(String(format: "$%.2f", revenue))
-                        .fontWeight(.semibold)
-                        .foregroundColor(.green)
-                }
-                
-                HStack {
-                    Text("Blended Price")
-                    Spacer()
-                    Text(String(format: "%.2f¢/kWh", blended))
-                        .foregroundColor(.purple)
-                }
-                
-                if dayCount > 0 {
+                let amount = tiers.reduce(0) { $0 + $1.estimatedRevenue }
+                let blended = total > 0 ? (amount / total) * 100 : 0
+
+                if direction == .sell {
+                    // Sell contract summary
                     HStack {
-                        Text("Daily Revenue")
+                        Text("Estimated Revenue")
                         Spacer()
-                        Text(String(format: "$%.2f/day", revenue / Double(dayCount)))
+                        Text(String(format: "$%.2f", amount))
+                            .fontWeight(.semibold)
+                            .foregroundColor(.green)
+                    }
+
+                    HStack {
+                        Text("Blended Price")
+                        Spacer()
+                        Text(String(format: "%.2f¢/kWh", blended))
+                            .foregroundColor(.purple)
+                    }
+
+                    if dayCount > 0 {
+                        HStack {
+                            Text("Daily Revenue")
+                            Spacer()
+                            Text(String(format: "$%.2f/day", amount / Double(dayCount)))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                } else {
+                    // Buy contract summary
+                    HStack {
+                        Text("Max Cost")
+                        Spacer()
+                        Text(String(format: "$%.2f", amount))
+                            .fontWeight(.semibold)
+                            .foregroundColor(.orange)
+                    }
+
+                    HStack {
+                        Text("Price Cap")
+                        Spacer()
+                        Text(String(format: "%.2f¢/kWh", blended))
+                            .foregroundColor(.orange)
+                    }
+
+                    if dayCount > 0 {
+                        HStack {
+                            Text("Daily Max")
+                            Spacer()
+                            Text(String(format: "$%.2f/day", amount / Double(dayCount)))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    // Hedge value note
+                    HStack(spacing: 8) {
+                        Image(systemName: "shield.checkered")
+                            .foregroundColor(.blue)
+                        Text("Unfilled volume falls back to spot price")
+                            .font(.caption)
                             .foregroundColor(.secondary)
                     }
                 }
             } else {
-                Text("Enter volume and tier details to see summary")
+                Text(direction == .sell
+                    ? "Enter volume and tier details to see summary"
+                    : "Enter volume and price cap to see summary")
                     .foregroundColor(.secondary)
             }
         }
@@ -319,32 +441,64 @@ struct P2PContractEntryView: View {
         guard let total = Double(totalVolumeKwh), total > 0 else { return false }
         guard endDate >= startDate else { return false }
         guard endHour > startHour else { return false }
-        guard !tierEntries.isEmpty else { return false }
-        
-        // All tiers need valid data
-        for entry in tierEntries {
-            guard let pct = Double(entry.percentage), pct > 0,
-                  let price = Double(entry.priceCents), price > 0 else {
-                return false
+
+        if direction == .sell {
+            // Sell contracts need valid tier entries
+            guard !tierEntries.isEmpty else { return false }
+            for entry in tierEntries {
+                guard let pct = Double(entry.percentage), pct > 0,
+                      let price = Double(entry.priceCents), price > 0 else {
+                    return false
+                }
             }
+        } else {
+            // Buy contracts need at least the initial price
+            guard let price = Double(buyPriceCents), price >= 0 else { return false }
         }
-        
+
         return true
     }
-    
+
     private func buildTiers() -> [P2PContractTier] {
         guard let total = Double(totalVolumeKwh), total > 0 else { return [] }
-        
-        return tierEntries.compactMap { entry in
-            guard let pct = Double(entry.percentage), pct > 0,
-                  let price = Double(entry.priceCents), price > 0 else {
-                return nil
+
+        if direction == .sell {
+            // Sell: use tier entries
+            return tierEntries.compactMap { entry in
+                guard let pct = Double(entry.percentage), pct > 0,
+                      let price = Double(entry.priceCents), price > 0 else {
+                    return nil
+                }
+                return P2PContractTier(
+                    percentage: pct,
+                    priceCents: price,
+                    volumeKwh: total * pct / 100.0
+                )
             }
-            return P2PContractTier(
-                percentage: pct,
-                priceCents: price,
-                volumeKwh: total * pct / 100.0
-            )
+        } else {
+            // Buy: create tiers from buy prices
+            var tiers: [P2PContractTier] = []
+
+            if let price1 = Double(buyPriceCents), price1 >= 0 {
+                let hasSecond = Double(buySecondPriceCents) != nil && !buySecondPriceCents.isEmpty
+                let pct1 = hasSecond ? 50.0 : 100.0  // Split if two prices
+
+                tiers.append(P2PContractTier(
+                    percentage: pct1,
+                    priceCents: price1,
+                    volumeKwh: total * pct1 / 100.0
+                ))
+
+                if let price2 = Double(buySecondPriceCents), price2 >= 0 {
+                    tiers.append(P2PContractTier(
+                        percentage: 50.0,
+                        priceCents: price2,
+                        volumeKwh: total * 50.0 / 100.0
+                    ))
+                }
+            }
+
+            return tiers
         }
     }
     
@@ -360,7 +514,8 @@ struct P2PContractEntryView: View {
     
     private func loadExistingContract() {
         guard let contract = existingContract else { return }
-        
+
+        direction = contract.direction
         startDate = contract.startDate
         endDate = contract.endDate
         startHour = contract.startHour
@@ -376,11 +531,23 @@ struct P2PContractEntryView: View {
             isRecurring = false
         }
         
-        tierEntries = contract.tiers.map { tier in
-            TierEntry(
-                percentage: String(format: "%.0f", tier.percentage),
-                priceCents: String(format: "%.0f", tier.priceCents)
-            )
+        if contract.direction == .sell {
+            // Load sell tiers
+            tierEntries = contract.tiers.map { tier in
+                TierEntry(
+                    percentage: String(format: "%.0f", tier.percentage),
+                    priceCents: String(format: "%.0f", tier.priceCents)
+                )
+            }
+        } else {
+            // Load buy prices from tiers
+            let sortedTiers = contract.tiers.sorted { $0.priceCents < $1.priceCents }
+            if let first = sortedTiers.first {
+                buyPriceCents = String(format: "%.0f", first.priceCents)
+            }
+            if sortedTiers.count > 1, let second = sortedTiers.dropFirst().first {
+                buySecondPriceCents = String(format: "%.0f", second.priceCents)
+            }
         }
     }
     
@@ -409,6 +576,7 @@ struct P2PContractEntryView: View {
         let contract = P2PContract(
             id: existingContract?.id ?? UUID(),
             siteId: siteId,
+            direction: direction,
             startDate: normalizedStart,
             endDate: normalizedEnd,
             startHour: startHour,

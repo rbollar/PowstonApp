@@ -3,23 +3,25 @@
 //  Powston
 //
 //  Translates Powston controller decision traces into human-readable explanations.
-//  Uses Foundation Models when available, with deterministic fallback.
+//  Uses hybrid architecture: deterministic engine extracts facts, AI writes prose.
 //  Reusable across Dashboard, ActionDetailsView, and Notifications.
 //
 
 import Foundation
 import SwiftUI
+import Combine
 import FoundationModels
 
 // MARK: - Output Structure
 
-struct DecisionExplanation {
-    let headline: String
-    let explanation: String
+struct DecisionExplanation: Equatable {
+    let headline: String           // "Holding: Near floor" (deterministic)
+    let explanation: String        // "Battery at 5%, near 53% floor." (AI or deterministic)
+    let keyFact: String?           // Most important extracted fact (deterministic)
     let usedAI: Bool
 }
 
-// MARK: - Context for FM
+// MARK: - Context for Analysis
 
 struct DecisionContext {
     let currentAction: String
@@ -36,10 +38,43 @@ struct DecisionContext {
 // MARK: - Parsed Trace
 
 struct ParsedDecisionTrace {
-    let finalAction: String
-    let matchingChecks: [String]
-    let infoEntries: [String]
-    let failedChecks: [String]
+    let finalAction: String         // "auto", "import", "export"
+    let matchingChecks: [String]    // ✅ entries that led to action
+    let infoEntries: [String]       // ℹ️ informational context
+    let failedChecks: [String]      // ❌ blocked conditions
+}
+
+// MARK: - Decision Analysis (Deterministic)
+
+struct DecisionAnalysis {
+    let action: ActionType
+    let headline: String
+    
+    // Extracted facts (all deterministic)
+    let soc: Int
+    let floorPercent: Int?
+    let buyPrice: Double
+    let sellPrice: Double
+    
+    // Reasons (extracted from trace)
+    let primaryReason: String?      // Why this action
+    let blockedReason: String?      // Why not the alternative
+    let priceContext: String?       // Price-related info
+    
+    // State flags
+    let isNearFloor: Bool
+    let isLowBattery: Bool
+    let isPriceOptimal: Bool
+    let hasNegativePrice: Bool
+    let hasPriceSpike: Bool
+    
+    enum ActionType: String {
+        case buying = "import"
+        case selling = "export"
+        case holding = "auto"
+        case curtailed = "curtail"
+        case unknown = "unknown"
+    }
 }
 
 // MARK: - FM Generable Output
@@ -47,9 +82,7 @@ struct ParsedDecisionTrace {
 @available(iOS 26.0, macOS 26.0, *)
 @Generable
 struct GenerableDecisionExplanation {
-    /// Short headline for the action, e.g. "Charging: Low prices" or "Auto: Waiting for better spread"
-    let headline: String
-    /// 1-2 sentence explanation of why this decision was made. Be specific about prices, SOC, thresholds.
+    /// 1-2 sentences explaining what's happening. Use the exact numbers from VERIFIED FACTS. Do NOT invent reasons.
     let explanation: String
 }
 
@@ -61,20 +94,33 @@ class DecisionReasonService: ObservableObject {
     static let shared = DecisionReasonService()
     
     @Published var isAvailable = false
+    @AppStorage("enableAppleIntelligence") private var enableAppleIntelligence: Bool = true
+    
+    var shouldUseAI: Bool {
+        enableAppleIntelligence && isAvailable
+    }
     
     private let systemInstructions = """
-    You are explaining energy controller decisions for a home battery system.
-    The controller decides whether to import (charge from grid), export (sell to grid), or stay in auto mode.
-    
-    KEY CONCEPTS:
-    - "Arbitrage gate" checks if SOC is enough to survive overnight. If SOC < survival threshold, the gate is "bypassed" (skipped).
-    - "Floor" is the minimum SOC the battery won't go below. Export is blocked if SOC ≤ floor.
-    - "Not optimal" means the price isn't good enough compared to expected better prices.
-    - "Physics urgent" means the physics model calculated an urgent need to charge.
-    - Negative prices (< 0¢) mean you GET PAID to import electricity.
-    - Peak periods are expensive — avoid importing during peaks.
-    
-    Be concise. Use plain language. Explain the WHY, not just restate the data.
+    Write ONE sentence explaining what the battery is doing NOW. Be concise.
+
+    RULES:
+    - ONE sentence max
+    - Use ONLY facts from VERIFIED FACTS
+    - NEVER repeat prices (already shown in UI)
+    - NEVER mention forecasts or future prices
+    - NEVER use jargon: SOC, arbitrage, gate, Best-N, threshold, floor
+    - Focus on current state, not strategy
+
+    GOOD:
+    ✓ "Battery at 12%, waiting for better rates."
+    ✓ "Buying while rates are cheap."
+    ✓ "Selling — good prices right now."
+    ✓ "Battery low, can't sell."
+
+    BAD:
+    ✗ "Battery at 12%, buy price 11.1¢, sell price 3.8¢" (repeats prices)
+    ✗ "Waiting for ultra-cheap rates at 2¢" (forecasting)
+    ✗ "SOC below arbitrage gate threshold" (jargon)
     """
     
     private var userLanguage: String {
@@ -98,7 +144,10 @@ class DecisionReasonService: ObservableObject {
         do {
             let session = LanguageModelSession()
             _ = try await session.respond(to: "test")
-            await MainActor.run { self.isAvailable = true }
+            await MainActor.run {
+                self.isAvailable = true
+                NotificationCenter.default.post(name: .init("DecisionReasonServiceAvailable"), object: nil)
+            }
         } catch {
             await MainActor.run { self.isAvailable = false }
         }
@@ -110,98 +159,245 @@ class DecisionReasonService: ObservableObject {
         let reasonText = reason ?? ""
         let parsed = parseDecisionTrace(reasonText)
         
-        // Try FM first
-        if #available(iOS 26.0, macOS 26.0, *), isAvailable {
+        // Build deterministic analysis first
+        let analysis = buildAnalysis(parsed: parsed, action: action, context: context, rawReason: reasonText)
+        
+        // Try AI for explanation prose if enabled
+        if #available(iOS 26.0, macOS 26.0, *), shouldUseAI {
             do {
-                return try await explainWithFoundationModels(
-                    parsed: parsed,
-                    action: action,
-                    context: context,
-                    rawReason: reasonText
-                )
+                return try await explainWithAI(analysis: analysis)
             } catch {
                 // Fall through to deterministic
             }
         }
         
         // Deterministic fallback
-        return buildDeterministicExplanation(
-            parsed: parsed,
-            action: action,
-            context: context,
-            rawReason: reasonText
+        return buildDeterministicExplanation(analysis: analysis)
+    }
+    
+    // MARK: - Analysis Builder (Deterministic)
+    
+    private func buildAnalysis(parsed: ParsedDecisionTrace, action: String, context: DecisionContext, rawReason: String) -> DecisionAnalysis {
+        let actionLower = action.lowercased()
+        let reasonLower = rawReason.lowercased()
+        
+        // Determine action type
+        let actionType: DecisionAnalysis.ActionType
+        switch actionLower {
+        case "charge", "import": actionType = .buying
+        case "discharge", "export": actionType = .selling
+        case "curtail": actionType = .curtailed
+        case "auto": actionType = .holding
+        default: actionType = .unknown
+        }
+        
+        // Extract floor percentage
+        var floorPercent: Int? = nil
+        let allEntries = parsed.matchingChecks + parsed.infoEntries + parsed.failedChecks + [rawReason]
+        for entry in allEntries {
+            if let match = entry.range(of: #"floor\s*(\d+)%"#, options: [.regularExpression, .caseInsensitive]) {
+                let numStr = entry[match].filter { $0.isNumber }
+                if let num = Int(numStr) {
+                    floorPercent = num
+                    break
+                }
+            }
+            if let match = entry.range(of: #"(\d+)%/(\d+)%"#, options: .regularExpression) {
+                let nums = entry[match].split(separator: "/").compactMap { Int($0.filter { $0.isNumber }) }
+                if nums.count == 2 {
+                    floorPercent = nums[1]
+                    break
+                }
+            }
+        }
+        
+        // State flags
+        // Near floor: only if SOC is within 10% of floor (not if way below)
+        let isNearFloor: Bool
+        if let floor = floorPercent {
+            let floorD = Double(floor)
+            isNearFloor = (reasonLower.contains("holding") || reasonLower.contains("near floor") || reasonLower.contains("near-miss"))
+                          && context.soc >= floorD - 5 && context.soc <= floorD + 10
+        } else {
+            isNearFloor = reasonLower.contains("holding") || reasonLower.contains("near floor") || reasonLower.contains("near-miss")
+        }
+        
+        // Low battery: SOC is low OR way below floor OR survival/gate mentioned
+        let isLowBattery = context.soc < 30 || reasonLower.contains("survival") || reasonLower.contains("gate")
+                           || (floorPercent != nil && context.soc < Double(floorPercent!) - 10)
+        let isPriceOptimal = !reasonLower.contains("not in best") && !reasonLower.contains("not optimal")
+        let hasNegativePrice = context.buyPrice < 0
+        let hasPriceSpike = context.sellPrice > 40
+        
+        // Build headline (deterministic)
+        let headline = buildHeadline(actionType: actionType, context: context, isNearFloor: isNearFloor, isLowBattery: isLowBattery, isPriceOptimal: isPriceOptimal, hasNegativePrice: hasNegativePrice, hasPriceSpike: hasPriceSpike, reasonLower: reasonLower)
+        
+        // Extract primary reason from trace
+        let primaryReason = extractPrimaryReason(parsed: parsed, actionType: actionType, reasonLower: reasonLower)
+        
+        // Extract blocked reason
+        let blockedReason = extractBlockedReason(parsed: parsed)
+        
+        // Price context
+        let priceContext = buildPriceContext(context: context, actionType: actionType)
+        
+        return DecisionAnalysis(
+            action: actionType,
+            headline: headline,
+            soc: Int(context.soc),
+            floorPercent: floorPercent,
+            buyPrice: context.buyPrice,
+            sellPrice: context.sellPrice,
+            primaryReason: primaryReason,
+            blockedReason: blockedReason,
+            priceContext: priceContext,
+            isNearFloor: isNearFloor,
+            isLowBattery: isLowBattery,
+            isPriceOptimal: isPriceOptimal,
+            hasNegativePrice: hasNegativePrice,
+            hasPriceSpike: hasPriceSpike
         )
     }
     
-    // MARK: - Foundation Models
-    
-    @available(iOS 26.0, macOS 26.0, *)
-    private func explainWithFoundationModels(
-        parsed: ParsedDecisionTrace,
-        action: String,
-        context: DecisionContext,
-        rawReason: String
-    ) async throws -> DecisionExplanation {
-        let prompt = buildFMPrompt(parsed: parsed, action: action, context: context)
-        
-        let session = LanguageModelSession(instructions: systemInstructions)
-        let response = try await session.respond(to: prompt, generating: GenerableDecisionExplanation.self)
-        
-        return DecisionExplanation(
-            headline: response.content.headline,
-            explanation: response.content.explanation,
-            usedAI: true
-        )
+    private func buildHeadline(actionType: DecisionAnalysis.ActionType, context: DecisionContext, isNearFloor: Bool, isLowBattery: Bool, isPriceOptimal: Bool, hasNegativePrice: Bool, hasPriceSpike: Bool, reasonLower: String) -> String {
+        switch actionType {
+        case .buying:
+            if hasNegativePrice {
+                return "Buying: Getting paid to charge"
+            } else if context.buyPrice < 3 {
+                return "Buying: Ultra-cheap rates"
+            } else if context.buyPrice < 8 {
+                return "Buying: Cheap rates"
+            } else if reasonLower.contains("urgent") || reasonLower.contains("physics") {
+                return "Buying: Needs charge"
+            }
+            return "Buying from grid"
+            
+        case .selling:
+            if hasPriceSpike {
+                return "Selling: Price spike"
+            } else if context.sellPrice > 20 {
+                return "Selling: Great prices"
+            } else if context.sellPrice > 10 {
+                return "Selling: Good prices"
+            }
+            return "Selling to grid"
+            
+        case .holding:
+            // Priority 1: Low battery (can't do much)
+            if isLowBattery || context.soc < 30 {
+                return "Holding: Battery low"
+            }
+            // Priority 2: Near floor (protecting reserves)
+            if isNearFloor {
+                return "Holding: Near floor"
+            }
+            // Priority 3: Waiting for prices
+            if !isPriceOptimal {
+                return "Waiting: Prices not right"
+            }
+            // Priority 4: Current activity
+            if context.solarKw > 1 && context.isCharging {
+                return "Auto: Storing solar"
+            } else if context.isExporting && abs(context.gridKw) > 0.5 {
+                return "Auto: Selling surplus"
+            } else if context.solarKw > 1 {
+                return "Auto: Solar powering home"
+            }
+            return "Waiting"
+            
+        case .curtailed:
+            return "Curtailed: Grid limit"
+            
+        case .unknown:
+            return "Monitoring"
+        }
     }
     
-    private func buildFMPrompt(parsed: ParsedDecisionTrace, action: String, context: DecisionContext) -> String {
-        var prompt = """
-        Explain this energy controller decision in plain language.
-        
-        CURRENT STATE:
-        - Action: \(action.uppercased())
-        - SOC: \(String(format: "%.0f", context.soc))%
-        - Solar: \(String(format: "%.1f", context.solarKw)) kW
-        - Grid: \(String(format: "%.1f", abs(context.gridKw))) kW (\(context.isExporting ? "exporting" : "importing"))
-        - Battery: \(String(format: "%.1f", abs(context.batteryKw))) kW (\(context.isCharging ? "charging" : "discharging"))
-        - Buy price: \(String(format: "%.1f", context.buyPrice))¢
-        - Sell price: \(String(format: "%.1f", context.sellPrice))¢
-        
-        DECISION TRACE:
-        Final action: \(parsed.finalAction)
-        """
-        
-        if !parsed.matchingChecks.isEmpty {
-            prompt += "\n\nWINNING CHECKS (✅ → \(parsed.finalAction)):"
-            for check in parsed.matchingChecks {
-                prompt += "\n- \(check)"
+    private func extractPrimaryReason(parsed: ParsedDecisionTrace, actionType: DecisionAnalysis.ActionType, reasonLower: String) -> String? {
+        // Look for the most relevant matching check
+        for check in parsed.matchingChecks {
+            let lower = check.lowercased()
+            
+            // Physics/urgent charge
+            if lower.contains("physics urgent") || lower.contains("urgent charge") {
+                return "urgent charge needed"
+            }
+            
+            // Best-N periods (price optimization)
+            if lower.contains("best") && (lower.contains("buy") || lower.contains("sell") || lower.contains("daytime")) {
+                if actionType == .buying {
+                    return "in best buy window"
+                } else if actionType == .selling {
+                    return "in best sell window"
+                }
+            }
+            
+            // Negative price
+            if lower.contains("negative") {
+                return "negative prices"
+            }
+            
+            // Peak period
+            if lower.contains("peak period") {
+                return "peak period"
             }
         }
         
-        if !parsed.infoEntries.isEmpty {
-            prompt += "\n\nINFO (why other actions weren't taken):"
-            for info in parsed.infoEntries.prefix(5) {
-                prompt += "\n- \(info)"
+        // Check info entries
+        for info in parsed.infoEntries {
+            let lower = info.lowercased()
+            
+            if lower.contains("holding") || lower.contains("near floor") {
+                return "near floor minimum"
+            }
+            if lower.contains("not optimal") || lower.contains("not in best") {
+                return "price not optimal"
             }
         }
         
-        if !parsed.failedChecks.isEmpty {
-            prompt += "\n\nBLOCKED (❌):"
-            for check in parsed.failedChecks.prefix(3) {
-                prompt += "\n- \(check)"
+        return nil
+    }
+    
+    private func extractBlockedReason(parsed: ParsedDecisionTrace) -> String? {
+        for failed in parsed.failedChecks {
+            let lower = failed.lowercased()
+            
+            if lower.contains("floor") {
+                return "below floor minimum"
+            }
+            if lower.contains("gate") || lower.contains("survival") {
+                return "battery too low"
+            }
+            if lower.contains("max buy") || lower.contains("expensive") {
+                return "buy price too high"
             }
         }
-        
-        prompt += """
-        
-        Generate:
-        - headline: Short action summary (e.g., "Auto: Waiting for better prices" or "Import: Solar shortfall")
-        - explanation: 1-2 sentences explaining WHY. Be specific about the key threshold or condition.
-        
-        Respond in \(userLanguage).
-        """
-        
-        return prompt
+        return nil
+    }
+    
+    private func buildPriceContext(context: DecisionContext, actionType: DecisionAnalysis.ActionType) -> String? {
+        switch actionType {
+        case .buying:
+            if context.buyPrice < 0 {
+                return "getting paid \(String(format: "%.1f", abs(context.buyPrice)))¢"
+            }
+            return "at \(String(format: "%.1f", context.buyPrice))¢"
+            
+        case .selling:
+            return "at \(String(format: "%.1f", context.sellPrice))¢"
+            
+        case .holding:
+            if context.sellPrice < 5 {
+                return "sell price only \(String(format: "%.1f", context.sellPrice))¢"
+            } else if context.buyPrice > 15 {
+                return "buy price \(String(format: "%.1f", context.buyPrice))¢ too high"
+            }
+            return nil
+            
+        default:
+            return nil
+        }
     }
     
     // MARK: - Trace Parsing
@@ -266,373 +462,146 @@ class DecisionReasonService: ObservableObject {
         return cleanText
     }
     
-    // MARK: - Deterministic Fallback
+    // MARK: - Foundation Models
     
-    private func buildDeterministicExplanation(
-        parsed: ParsedDecisionTrace,
-        action: String,
-        context: DecisionContext,
-        rawReason: String
-    ) -> DecisionExplanation {
-        let headline = buildHeadline(parsed: parsed, action: action, context: context, rawReason: rawReason)
-        let explanation = buildExplanation(parsed: parsed, action: action, context: context, rawReason: rawReason)
+    @available(iOS 26.0, macOS 26.0, *)
+    private func explainWithAI(analysis: DecisionAnalysis) async throws -> DecisionExplanation {
+        let prompt = buildFMPrompt(analysis: analysis)
+        let session = LanguageModelSession(instructions: systemInstructions)
+        let response = try await session.respond(to: prompt, generating: GenerableDecisionExplanation.self)
         
         return DecisionExplanation(
-            headline: headline,
+            headline: analysis.headline,
+            explanation: response.content.explanation,
+            keyFact: buildKeyFact(analysis: analysis),
+            usedAI: true
+        )
+    }
+    
+    private func buildFMPrompt(analysis: DecisionAnalysis) -> String {
+        var prompt = """
+        Explain what the battery is doing NOW in ONE sentence.
+
+        ACTION: \(analysis.action.rawValue) (\(actionDescription(analysis.action)))
+        
+        ✅ VERIFIED FACTS:
+        - Battery: \(analysis.soc)%
+        """
+        
+        // Only mention floor if actually near it (within 10%)
+        if let floor = analysis.floorPercent, analysis.soc <= floor + 10, analysis.soc >= floor - 5 {
+            prompt += "\n- Near floor minimum (\(floor)%)"
+        }
+        
+        // State context - simplified
+        if analysis.isLowBattery {
+            prompt += "\n- Battery is low"
+        }
+        if analysis.hasNegativePrice {
+            prompt += "\n- Negative prices (getting paid to charge)"
+        }
+        if analysis.hasPriceSpike {
+            prompt += "\n- Price spike happening"
+        }
+        if !analysis.isPriceOptimal && analysis.action == .holding {
+            prompt += "\n- Waiting for better prices"
+        }
+        
+        prompt += """
+        
+
+        Write ONE sentence. Do NOT mention specific prices (already shown in UI).
+        
+        Respond in \(userLanguage).
+        """
+        
+        return prompt
+    }
+    
+    private func actionDescription(_ action: DecisionAnalysis.ActionType) -> String {
+        switch action {
+        case .buying: return "charging from grid"
+        case .selling: return "exporting to grid"
+        case .holding: return "waiting/holding"
+        case .curtailed: return "grid limited"
+        case .unknown: return "monitoring"
+        }
+    }
+    
+    // MARK: - Deterministic Fallback
+    
+    private func buildDeterministicExplanation(analysis: DecisionAnalysis) -> DecisionExplanation {
+        let explanation = buildExplanationText(analysis: analysis)
+        
+        return DecisionExplanation(
+            headline: analysis.headline,
             explanation: explanation,
+            keyFact: buildKeyFact(analysis: analysis),
             usedAI: false
         )
     }
     
-    private func buildHeadline(parsed: ParsedDecisionTrace, action: String, context: DecisionContext, rawReason: String) -> String {
-        let actionLower = action.lowercased()
-        
-        switch actionLower {
-        case "charge", "import":
-            if context.buyPrice < 0 {
-                return "Import: Getting paid to charge!"
+    private func buildExplanationText(analysis: DecisionAnalysis) -> String {
+        switch analysis.action {
+        case .buying:
+            if analysis.hasNegativePrice {
+                return "Getting paid to charge!"
+            } else if analysis.buyPrice < 3 {
+                return "Ultra-cheap rates — charging up."
+            } else if analysis.buyPrice < 8 {
+                return "Cheap rates — good time to charge."
+            } else if analysis.primaryReason == "urgent charge needed" {
+                return "Battery low, needs to charge."
             }
-            if let winningReason = parsed.matchingChecks.last {
-                return "Import: \(summarizeReason(winningReason))"
-            }
-            if context.buyPrice < 3 {
-                return "Import: Ultra-cheap rates"
-            }
-            return "Charging from grid"
+            return "Charging from grid."
             
-        case "discharge", "export":
-            if let winningReason = parsed.matchingChecks.last {
-                return "Export: \(summarizeReason(winningReason))"
+        case .selling:
+            if analysis.hasPriceSpike {
+                return "Price spike — selling stored power."
+            } else if analysis.sellPrice > 20 {
+                return "Great prices — selling stored power."
             }
-            if context.sellPrice > 40 {
-                return "Export: Capturing price spike"
-            } else if context.sellPrice > 20 {
-                return "Export: Premium rates"
-            }
-            return "Exporting to grid"
+            return "Selling to grid."
             
-        case "auto":
-            if let winningReason = parsed.matchingChecks.last {
-                let isJustDefault = winningReason.lowercased().contains("starting in auto") ||
-                                    winningReason.lowercased().contains("default")
-                
-                if !isJustDefault {
-                    return "Auto: \(summarizeReason(winningReason))"
-                }
+        case .holding:
+            // Low battery is the main constraint
+            if analysis.isLowBattery || analysis.soc < 30 {
+                return "Battery at \(analysis.soc)%, waiting for better rates."
             }
             
-            if let infoReason = extractBestInfoReason(parsed.infoEntries) {
-                return "Auto: \(infoReason)"
+            // Near floor - protecting reserves
+            if analysis.isNearFloor, let floor = analysis.floorPercent {
+                return "Battery at \(analysis.soc)%, near \(floor)% floor for tonight."
             }
             
-            let reasonLower = rawReason.lowercased()
-            if reasonLower.contains("floor") || reasonLower.contains("holding") {
-                return "Auto: Near floor — holding"
-            }
-            if reasonLower.contains("survival") || reasonLower.contains("overnight") {
-                return "Auto: Preserving overnight reserve"
+            // Just waiting for prices
+            if !analysis.isPriceOptimal {
+                return "Waiting for better prices."
             }
             
-            if context.solarKw > 1 && context.isCharging && abs(context.batteryKw) > 1 {
-                return "Auto: Storing solar"
-            } else if context.isCharging && abs(context.batteryKw) > 1 {
-                return "Auto: Charging"
-            } else if context.isExporting && abs(context.gridKw) > 0.5 {
-                return "Auto: Exporting surplus"
-            } else if context.solarKw > 1 {
-                return "Auto: Solar powering home"
-            }
+            return "Monitoring conditions."
             
-            return "Auto: Monitoring"
+        case .curtailed:
+            return "Grid export limit reached."
             
-        case "curtail":
-            return "Curtailed: Grid limit reached"
-            
-        default:
-            return "Controller active"
+        case .unknown:
+            return "Controller active."
         }
     }
     
-    private func buildExplanation(parsed: ParsedDecisionTrace, action: String, context: DecisionContext, rawReason: String) -> String {
-        if parsed.finalAction == "import" || parsed.finalAction == "export" {
-            if let matchingReason = parsed.matchingChecks.last {
-                return translateReasonDetail(matchingReason)
-            }
+    private func buildKeyFact(analysis: DecisionAnalysis) -> String? {
+        // Only show key facts that add real value
+        if analysis.hasNegativePrice {
+            return "Negative!"
         }
-        
-        if parsed.finalAction == "auto" {
-            if let matchingReason = parsed.matchingChecks.last {
-                let isJustDefault = matchingReason.lowercased().contains("starting in auto") ||
-                                    matchingReason.lowercased().contains("default")
-                if !isJustDefault {
-                    return translateReasonDetail(matchingReason)
-                }
-            }
-            
-            if let infoDetail = buildAutoDetailFromInfo(parsed.infoEntries) {
-                return infoDetail
-            }
+        if analysis.hasPriceSpike {
+            return "Spike!"
         }
-        
-        let reasonLower = rawReason.lowercased()
-        if reasonLower.contains("floor") || reasonLower.contains("holding") {
-            return "Battery near minimum — protecting reserves"
+        // Only show floor if actually near it
+        if analysis.isNearFloor, let floor = analysis.floorPercent,
+           analysis.soc <= floor + 5 && analysis.soc >= floor - 5 {
+            return "Floor: \(floor)%"
         }
-        if reasonLower.contains("survival") || reasonLower.contains("overnight") {
-            return "SOC sufficient for overnight — holding position"
-        }
-        if reasonLower.contains("arbitrage gate") {
-            if reasonLower.contains("< ") || reasonLower.contains("bypassed") {
-                return "SOC below survival threshold — arbitrage gate bypassed"
-            }
-            return "Arbitrage gate passed — SOC sufficient"
-        }
-        
-        return buildFallbackExplanation(action: action, context: context)
-    }
-    
-    private func buildFallbackExplanation(action: String, context: DecisionContext) -> String {
-        let actionLower = action.lowercased()
-        
-        switch actionLower {
-        case "charge", "import":
-            if context.buyPrice < 0 {
-                return "Negative prices — earning while charging"
-            } else if context.buyPrice < 5 {
-                return "Low import rates"
-            }
-            return "Building reserves"
-            
-        case "discharge", "export":
-            if context.sellPrice > 30 {
-                return "High export rates"
-            }
-            return "Favorable spread"
-            
-        case "auto":
-            if context.solarKw > 1 {
-                return "Solar covering load"
-            }
-            let spread = context.sellPrice - context.buyPrice
-            if spread >= 0 && spread < 5 {
-                return "Spread \(String(format: "%.1f", spread))¢ below trading threshold"
-            }
-            return "Monitoring for opportunities"
-            
-        case "curtail":
-            return "Grid operator limiting export"
-            
-        default:
-            return "Managing energy flow"
-        }
-    }
-    
-    // MARK: - Pattern Matching Helpers
-    
-    private func summarizeReason(_ reason: String) -> String {
-        let lower = reason.lowercased()
-        
-        if lower.contains("arbitrage gate") {
-            return lower.contains("bypassed") || lower.contains("< ") ? "Low SOC — gate bypassed" : "Arbitrage gate passed"
-        }
-        if lower.contains("physics urgent") {
-            return lower.contains("not") ? "No urgent charge needed" : "Physics model: urgent charge"
-        }
-        if lower.contains("not in best") || lower.contains("not optimal") {
-            if lower.contains("sell") { return "Sell price not optimal" }
-            if lower.contains("buy") || lower.contains("daytime") { return "Buy price not optimal" }
-            return "Price not optimal"
-        }
-        if lower.contains("floor") && (lower.contains("block") || lower.contains("≤")) {
-            return "Export blocked by floor"
-        }
-        if lower.contains("near-miss") { return "Near floor threshold" }
-        if lower.contains("peak period") { return "Peak period protection" }
-        if lower.contains("sunny day") { return "Sunny day — waiting" }
-        if lower.contains("waiting for") && lower.contains("price") { return "Waiting for better price" }
-        if lower.contains("deficit") && lower.contains("block") { return "Deficit block active" }
-        if lower.contains("negative price") { return "Negative price handling" }
-        if lower.contains("battery full") || lower.contains("nearly full") { return "Battery nearly full" }
-        if lower.contains("import restriction") { return "Import restricted" }
-        if lower.contains("spread check") { return "Spread too tight" }
-        if lower.contains("insufficient margin") || lower.contains("insufficient savings") { return "Insufficient margin" }
-        if lower.contains("solar shortfall") { return "Solar shortfall" }
-        if lower.contains("morning dumping") || lower.contains("morning dump") { return "Morning dump — high SOC" }
-        
-        // Strip P## prefix
-        var cleanReason = reason
-        if let match = reason.range(of: #"^P\d+:\s*"#, options: .regularExpression) {
-            cleanReason = String(reason[match.upperBound...])
-        }
-        
-        if cleanReason.count <= 35 { return cleanReason.trimmingCharacters(in: .whitespaces) }
-        
-        let index = cleanReason.index(cleanReason.startIndex, offsetBy: min(32, cleanReason.count))
-        return String(cleanReason[..<index]) + "..."
-    }
-    
-    private func translateReasonDetail(_ reason: String) -> String {
-        let lower = reason.lowercased()
-        
-        if lower.contains("arbitrage gate") {
-            if lower.contains("bypassed") || lower.contains("< ") {
-                if let match = reason.range(of: #"SOC (\d+)%\s*<\s*(\d+)%"#, options: [.regularExpression, .caseInsensitive]) {
-                    return "SOC \(String(reason[match])) survival — gate bypassed"
-                }
-                return "SOC below survival threshold — arbitrage gate bypassed"
-            }
-            return "Arbitrage gate passed — SOC sufficient for overnight"
-        }
-        
-        if lower.contains("floor") && (lower.contains("block") || lower.contains("≤")) {
-            if let socMatch = reason.range(of: #"SOC (\d+)%"#, options: [.regularExpression, .caseInsensitive]),
-               let floorMatch = reason.range(of: #"floor (\d+)%"#, options: [.regularExpression, .caseInsensitive]) {
-                let soc = String(reason[socMatch]).replacingOccurrences(of: "SOC ", with: "")
-                let floor = String(reason[floorMatch]).replacingOccurrences(of: "floor ", with: "")
-                return "SOC \(soc) at floor \(floor) — export blocked"
-            }
-            return "Export blocked by floor setting"
-        }
-        
-        if lower.contains("not physics urgent") { return "No urgent charge window — deadline not imminent" }
-        
-        if lower.contains("not in best") || lower.contains("not optimal") {
-            if lower.contains("sell") {
-                if let match = reason.range(of: #"Sell (\d+\.?\d*)c"#, options: [.regularExpression, .caseInsensitive]) {
-                    return "\(String(reason[match])) not in optimal sell range"
-                }
-                return "Sell price not in optimal range"
-            }
-            if lower.contains("buy") || lower.contains("daytime") {
-                if let match = reason.range(of: #"Daytime (\d+\.?\d*)c"#, options: [.regularExpression, .caseInsensitive]) {
-                    return "\(String(reason[match])) — waiting for cheaper"
-                }
-                return "Buy price not optimal — waiting"
-            }
-        }
-        
-        if lower.contains("solar shortfall") { return "Solar shortfall detected — importing while price acceptable" }
-        if lower.contains("morning dumping") || lower.contains("morning dump") { return "Morning dump — high SOC + good sun + better buy prices coming" }
-        if lower.contains("surplus") && lower.contains("block") { return "Surplus export blocked by floor" }
-        if lower.contains("negative price") { return "Negative price — getting paid to charge" }
-        if lower.contains("waiting for") && lower.contains("price") { return "Waiting for optimal price window" }
-        if lower.contains("sunny day") { return "Sunny day — expecting solar, holding off" }
-        if lower.contains("spread check") { return "Spread too tight for profitable trade" }
-        
-        // Strip P## prefix
-        var cleanReason = reason
-        if let match = reason.range(of: #"^P\d+:\s*"#, options: .regularExpression) {
-            cleanReason = String(reason[match.upperBound...])
-        }
-        
-        if cleanReason.count > 60 {
-            let index = cleanReason.index(cleanReason.startIndex, offsetBy: 57)
-            return String(cleanReason[..<index]) + "..."
-        }
-        
-        return cleanReason
-    }
-    
-    private func extractBestInfoReason(_ infoEntries: [String]) -> String? {
-        for entry in infoEntries {
-            let lower = entry.lowercased()
-            
-            if lower.contains("floor") && (lower.contains("block") || lower.contains("≤")) { return "Export blocked by floor" }
-            if lower.contains("near floor") || (lower.contains("floor") && lower.contains("holding")) { return "Near floor — holding reserves" }
-            if lower.contains("below night reserve") || lower.contains("reserve level") { return "Preserving night reserve" }
-            if lower.contains("arbitrage gate") { return lower.contains("bypassed") || lower.contains("< ") ? "SOC below survival — gate bypassed" : "Arbitrage gate passed" }
-            if lower.contains("not physics urgent") { return "No urgent charge needed" }
-            
-            if lower.contains("not selling") {
-                if let match = entry.range(of: #"(\d+\.?\d*)c?\s*<\s*(\d+\.?\d*)c"#, options: .regularExpression) {
-                    return "Spread too tight (\(String(entry[match])))"
-                }
-                return "Spread too tight"
-            }
-            
-            if lower.contains("not in best") || lower.contains("not optimal") {
-                if lower.contains("sell") { return "Sell price not in optimal range" }
-                if lower.contains("buy") || lower.contains("daytime") { return "Buy price not optimal" }
-                return "Price not optimal"
-            }
-            
-            if lower.contains("price too high") { return "Import price too high" }
-            if lower.contains("spread check") { return "Spread check failed" }
-        }
-        
-        for entry in infoEntries {
-            let lower = entry.lowercased()
-            if lower.contains("solar forecast low") { return "Solar forecast low" }
-            if lower.contains("good sun day") || lower.contains("sunny day") { return "Sunny day — waiting for optimal" }
-            if lower.contains("waiting for") && lower.contains("price") { return "Waiting for better price" }
-        }
-        
-        for entry in infoEntries {
-            let lower = entry.lowercased()
-            if lower.contains("threshold") && lower.contains("not met") { return "Export threshold not met" }
-            if lower.contains("insufficient surplus") || lower.contains("insufficient margin") { return "Insufficient margin" }
-            if lower.contains("battery full") || lower.contains("nearly full") { return "Battery nearly full" }
-            if lower.contains("ev charging") { return lower.contains("limiting") ? "Limiting EV charging" : "EV charging active" }
-            if lower.contains("import restriction") { return "Import restricted" }
-        }
-        
-        return nil
-    }
-    
-    private func buildAutoDetailFromInfo(_ infoEntries: [String]) -> String? {
-        for entry in infoEntries {
-            let lower = entry.lowercased()
-            
-            if lower.contains("floor") && (lower.contains("block") || lower.contains("≤")) {
-                if let socMatch = entry.range(of: #"SOC (\d+)%"#, options: [.regularExpression, .caseInsensitive]),
-                   let floorMatch = entry.range(of: #"floor (\d+)%"#, options: [.regularExpression, .caseInsensitive]) {
-                    let soc = String(entry[socMatch]).replacingOccurrences(of: "SOC ", with: "")
-                    let floor = String(entry[floorMatch]).replacingOccurrences(of: "floor ", with: "")
-                    return "SOC \(soc) at floor \(floor) — export blocked"
-                }
-                return "Export blocked by floor setting"
-            }
-            
-            if lower.contains("near floor") || (lower.contains("floor") && lower.contains("holding")) {
-                return "Battery near minimum — protecting reserves"
-            }
-            
-            if lower.contains("arbitrage gate") {
-                if lower.contains("bypassed") || lower.contains("< ") {
-                    if let match = entry.range(of: #"SOC (\d+)%\s*<\s*(\d+)%"#, options: [.regularExpression, .caseInsensitive]) {
-                        return "SOC \(String(entry[match])) survival — gate bypassed"
-                    }
-                    return "SOC below survival threshold — arbitrage gate bypassed"
-                }
-                return "Arbitrage gate passed — SOC sufficient"
-            }
-            
-            if lower.contains("not physics urgent") { return "No urgent charge window — deadline not imminent" }
-            
-            if lower.contains("not in best") || lower.contains("not optimal") {
-                if lower.contains("sell") {
-                    if let match = entry.range(of: #"Sell (\d+\.?\d*)c"#, options: [.regularExpression, .caseInsensitive]) {
-                        return "\(String(entry[match])) not in optimal sell range"
-                    }
-                    return "Sell price not in optimal range"
-                }
-                if lower.contains("buy") || lower.contains("daytime") {
-                    return "Buy price not in optimal range"
-                }
-            }
-            
-            if lower.contains("not selling") {
-                if let match = entry.range(of: #"(\d+\.?\d*)c?\s*<\s*(\d+\.?\d*)c"#, options: .regularExpression) {
-                    return "Sell price \(String(entry[match])) threshold"
-                }
-            }
-            
-            if lower.contains("waiting for optimal price") || lower.contains("waiting for better price") { return "Waiting for optimal price window" }
-            if lower.contains("solar forecast low") { return "Solar forecast low — holding position" }
-            if lower.contains("insufficient surplus") || lower.contains("insufficient margin") { return "Insufficient margin for trading" }
-            if lower.contains("sunny day") || lower.contains("good sun day") { return "Sunny day expected — waiting for optimal window" }
-        }
-        
         return nil
     }
 }

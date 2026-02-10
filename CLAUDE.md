@@ -135,7 +135,15 @@ Toggle `demo_mode_enabled` in Settings for testing without API calls.
 ### API Endpoint Notes
 - Different endpoints (`day_rates` vs `tariff_rates` vs `meter_records`) can return inconsistent data
 - Always verify which endpoint is authoritative for the specific use case
-- LocalVolts P2P data currently requires screen-scraping; no proper API yet
+
+### LocalVolts Integration
+- **No CSV export**: LocalVolts does not provide CSV export of any kind
+- **No historical API**: Trade information is NOT available through their API
+- **WebSocket only returns today**: The Socket.IO identity response only contains current day's P2P trades
+- **Historical data**: Only available through the web portal (would require screen scraping)
+- **Date convention**: LocalVolts WebSocket APIs return actual trading dates, NOT settlement dates (T+1). Use dates as-is without adjustment. This applies to both Identity response (QtyReport) and ContractTable.
+- **Timezone**: Always AEST (Australia/Brisbane, UTC+10) - same as AEMO
+- **Protocol**: Socket.IO v2 (EIO=3) with `suffix=` query parameter required for identification
 
 ### Timezone Handling
 - Use `Australia/Sydney` for NSW users, `Australia/Brisbane` for QLD

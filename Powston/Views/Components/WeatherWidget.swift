@@ -9,6 +9,7 @@ struct WeatherWidget: View {
     @StateObject private var weather = WeatherService.shared
     let latitude: Double
     let longitude: Double
+    @State private var selectedHour: HourlyWeather?
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -16,6 +17,7 @@ struct WeatherWidget: View {
             HStack {
                 Image(systemName: "cloud.sun.fill")
                     .foregroundColor(.orange)
+                    .accessibilityHidden(true)
                 Text("Solar Forecast")
                     .font(.subheadline)
                     .fontWeight(.semibold)
@@ -23,22 +25,37 @@ struct WeatherWidget: View {
                 if weather.isLoading {
                     ProgressView()
                         .scaleEffect(0.7)
+                        .accessibilityLabel("Loading")
                 }
             }
+            .accessibilityAddTraits(.isHeader)
             
-            if let error = weather.error {
+            if let error = weather.error, !error.contains("cancelled") {
                 HStack {
                     Image(systemName: "exclamationmark.triangle")
                         .foregroundColor(.orange)
+                        .accessibilityHidden(true)
                     Text(error)
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-            } else if weather.hourlyForecast.isEmpty {
-                Text("Loading weather...")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            } else {
+                .accessibilityLabel("Weather error: \(error)")
+            } else if weather.hourlyForecast.isEmpty && !weather.isLoading {
+                HStack {
+                    Text("Loading weather...")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Button(action: {
+                        Task {
+                            await weather.fetchWeather(latitude: latitude, longitude: longitude)
+                        }
+                    }) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.caption)
+                    }
+                    .accessibilityLabel("Retry loading weather")
+                }
+            } else if !weather.hourlyForecast.isEmpty {
                 // Current conditions
                 if let current = weather.currentWeather {
                     HStack(spacing: 16) {
@@ -51,6 +68,8 @@ struct WeatherWidget: View {
                                 .font(.subheadline)
                                 .fontWeight(.medium)
                         }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Temperature: \(Int(current.temperature)) degrees")
                         
                         // Cloud cover
                         HStack(spacing: 4) {
@@ -60,6 +79,8 @@ struct WeatherWidget: View {
                             Text("\(current.cloudCover)%")
                                 .font(.subheadline)
                         }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Cloud cover: \(current.cloudCover) percent")
                         
                         // Solar radiation
                         HStack(spacing: 4) {
@@ -69,40 +90,104 @@ struct WeatherWidget: View {
                             Text("\(Int(current.totalRadiation)) W/m²")
                                 .font(.subheadline)
                         }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Solar radiation: \(Int(current.totalRadiation)) watts per square meter")
                     }
                     .padding(.bottom, 4)
                 }
                 
-                // Next 6 hours forecast
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(weather.nextHours(6)) { hour in
-                            WeatherHourCell(weather: hour)
+                // Selected hour detail
+                if let selected = selectedHour {
+                    HStack(spacing: 16) {
+                        Image(systemName: "sun.max.fill")
+                            .foregroundColor(.yellow)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(formatHourFull(selected.time))
+                                .font(.caption)
+                                .fontWeight(.medium)
+                            Text("\(Int(selected.totalRadiation)) W/m² solar radiation")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
+                        Spacer()
+                        Text("\(Int(selected.cloudCover))% cloud")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Button(action: { selectedHour = nil }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                        .accessibilityLabel("Dismiss")
+                    }
+                    .padding(8)
+                    .background(Color.yellow.opacity(0.1))
+                    .cornerRadius(8)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(formatHourFull(selected.time)): \(Int(selected.totalRadiation)) watts per square meter, \(Int(selected.cloudCover)) percent cloud cover")
+                }
+                
+                // Next 6 hours forecast
+                let hours = weather.nextHours(6)
+                HStack(spacing: 0) {
+                    ForEach(Array(hours.enumerated()), id: \.element.id) { index, hour in
+                        WeatherHourCell(weather: hour, isSelected: selectedHour?.id == hour.id)
+                            .frame(maxWidth: .infinity)
                     }
                 }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 15)
+                        .onChanged { value in
+                            // Only respond to horizontal drags - let vertical pass through for scrolling
+                            let horizontalDistance = abs(value.translation.width)
+                            let verticalDistance = abs(value.translation.height)
+                            guard horizontalDistance > verticalDistance * 1.5 else { return }
+                            
+                            let totalWidth = UIScreen.main.bounds.width - 32
+                            let cellWidth = totalWidth / CGFloat(hours.count)
+                            let index = Int(value.location.x / cellWidth)
+                            if index >= 0 && index < hours.count {
+                                let hour = hours[index]
+                                if selectedHour?.id != hour.id {
+                                    selectedHour = hour
+                                }
+                            }
+                        }
+                )
+                .accessibilityLabel("Hourly forecast. Swipe to select hours.")
             }
         }
         .padding()
         .background(Color.gray.opacity(0.1))
         .cornerRadius(12)
-        .task {
-            if weather.hourlyForecast.isEmpty {
-                await weather.fetchWeather(latitude: latitude, longitude: longitude)
+        .onAppear {
+            if weather.hourlyForecast.isEmpty && !weather.isLoading {
+                Task {
+                    await weather.fetchWeather(latitude: latitude, longitude: longitude)
+                }
             }
         }
+    }
+    
+    func formatHourFull(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEEE ha"  // "Monday 2pm"
+        formatter.timeZone = powstonTimezone()
+        return formatter.string(from: date)
     }
 }
 
 struct WeatherHourCell: View {
     let weather: HourlyWeather
+    var isSelected: Bool = false
     
     var body: some View {
         VStack(spacing: 6) {
             // Time
             Text(formatHour(weather.time))
                 .font(.caption2)
-                .foregroundColor(.secondary)
+                .foregroundColor(isSelected ? .primary : .secondary)
             
             // Cloud icon
             Image(systemName: weather.cloudIcon)
@@ -119,6 +204,11 @@ struct WeatherHourCell: View {
                 .fontWeight(.medium)
         }
         .frame(width: 50)
+        .padding(.vertical, 4)
+        .background(isSelected ? Color.yellow.opacity(0.2) : Color.clear)
+        .cornerRadius(8)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(formatHour(weather.time)): \(Int(weather.temperature)) degrees, \(Int(weather.cloudCover)) percent cloud, \(Int(weather.totalRadiation)) watts per square meter")
     }
     
     var iconColor: Color {
@@ -129,10 +219,9 @@ struct WeatherHourCell: View {
     
     func formatHour(_ date: Date) -> String {
         let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        formatter.dateStyle = .none
+        formatter.dateFormat = "ha"  // "7PM" format
         formatter.timeZone = powstonTimezone()
-        return formatter.string(from: date)
+        return formatter.string(from: date).lowercased()
     }
 }
 

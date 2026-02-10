@@ -17,7 +17,13 @@ struct TrainingParameters: Codable {
     var batterySocAc: Int?
     var alwaysImportSoc: Int?
     var defaultExport: Int?
-    
+    var importFactor: Int?
+
+    // P2P Export settings
+    var p2pExportPower: Int?      // Watts (0 = disabled)
+    var p2pExportStartHour: Int?  // Hour to start P2P export (0-23)
+    var p2pExportEndHour: Int?    // Hour to end P2P export (0-23)
+
     enum CodingKeys: String, CodingKey {
         case minSoc = "min_soc"
         case maxSoc = "max_soc"
@@ -26,8 +32,12 @@ struct TrainingParameters: Codable {
         case batterySocAc = "BATTERY_SOC_AC"
         case alwaysImportSoc = "ALWAYS_IMPORT_SOC"
         case defaultExport = "DEFAULT_EXPORT"
+        case importFactor = "IMPORT_FACTOR"
+        case p2pExportPower = "P2P_EXPORT_POWER"
+        case p2pExportStartHour = "P2P_EXPORT_START_HOUR"
+        case p2pExportEndHour = "P2P_EXPORT_END_HOUR"
     }
-    
+
     /// Create empty parameters
     static var empty: TrainingParameters {
         TrainingParameters(
@@ -37,7 +47,11 @@ struct TrainingParameters: Codable {
             batterySocNeeded: nil,
             batterySocAc: nil,
             alwaysImportSoc: nil,
-            defaultExport: nil
+            defaultExport: nil,
+            importFactor: nil,
+            p2pExportPower: nil,
+            p2pExportStartHour: nil,
+            p2pExportEndHour: nil
         )
     }
 }
@@ -98,14 +112,14 @@ extension PowstonAPI {
     ///   - siteId: The site ID
     ///   - params: The parameters to update
     /// - Returns: Result with success or error message
-    func updateTrainingParameters(siteId: Int, params: TrainingParameters) async -> Result<Void, String> {
+    func updateTrainingParameters(siteId: Int, params: TrainingParameters) async -> Result<Void, Error> {
         guard !apiKey.isEmpty else {
-            return .failure("No API key")
+            return .failure(NSError(domain: "TrainingParameters", code: 401, userInfo: [NSLocalizedDescriptionKey: "No API key"]))
         }
         
         let urlString = "\(baseURL)/api/training_parameters/\(siteId)"
         guard let url = URL(string: urlString) else {
-            return .failure("Invalid URL")
+            return .failure(NSError(domain: "TrainingParameters", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"]))
         }
         
         var request = URLRequest(url: url)
@@ -125,7 +139,7 @@ extension PowstonAPI {
             let (data, response) = try await URLSession.shared.data(for: request)
             
             guard let httpResponse = response as? HTTPURLResponse else {
-                return .failure("Invalid response")
+                return .failure(NSError(domain: "TrainingParameters", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid response"]))
             }
             
             if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 {
@@ -134,12 +148,12 @@ extension PowstonAPI {
             } else {
                 let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
                 print("❌ Training parameters update failed: HTTP \(httpResponse.statusCode) - \(errorText)")
-                return .failure("HTTP \(httpResponse.statusCode): \(errorText)")
+                return .failure(NSError(domain: "TrainingParameters", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: errorText]))
             }
             
         } catch {
             print("❌ Training parameters update error: \(error)")
-            return .failure(error.localizedDescription)
+            return .failure(error)
         }
     }
 }

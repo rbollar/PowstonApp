@@ -8,6 +8,21 @@
 import WidgetKit
 import SwiftUI
 
+// MARK: - Cached Data Access (standalone for widget)
+
+enum WatchWidgetDataProvider {
+    private static let watchAppGroup = "group.com.bollar.powston.watch"
+    
+    static func getCachedComplicationData() -> WatchComplicationData {
+        guard let sharedDefaults = UserDefaults(suiteName: watchAppGroup),
+              let data = sharedDefaults.data(forKey: "cached_complication_data"),
+              let decoded = try? JSONDecoder().decode(WatchComplicationData.self, from: data) else {
+            return .placeholder
+        }
+        return decoded
+    }
+}
+
 // MARK: - Timeline Provider
 
 struct PowstonWatchProvider: TimelineProvider {
@@ -16,12 +31,12 @@ struct PowstonWatchProvider: TimelineProvider {
     }
     
     func getSnapshot(in context: Context, completion: @escaping (PowstonWatchEntry) -> Void) {
-        let data = WatchAPI.getCachedComplicationData()
+        let data = WatchWidgetDataProvider.getCachedComplicationData()
         completion(PowstonWatchEntry(date: Date(), data: data))
     }
     
     func getTimeline(in context: Context, completion: @escaping (Timeline<PowstonWatchEntry>) -> Void) {
-        let data = WatchAPI.getCachedComplicationData()
+        let data = WatchWidgetDataProvider.getCachedComplicationData()
         let entry = PowstonWatchEntry(date: Date(), data: data)
         
         // Refresh every 15 minutes

@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs:*)",
+      "Bash(xcodebuild:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd CLAUDE.md for Claude Code guidance\n\nProvides context for future AI sessions including build commands,\narchitecture overview, key data models, and development practices.\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(grep:*)",
+      "Bash(xcrun simctl:*)",
+      "Bash(ls:*)",
+      "Bash(git mv:*)",
+      "Bash(plutil -lint:*)",
+      "Bash(python3:*)",
+      "Bash(git checkout:*)",
+      "Bash(git stash:*)",
+      "Bash(comm:*)",
+      "Bash(while read dup)",
+      "Bash(do echo \"=== $dup ===\")",
+      "Bash(find:*)",
+      "Bash(done)",
+      "Bash(swift -typecheck:*)",
+      "Bash(ruby -e:*)",
+      "Bash(xcodegen generate:*)",
+      "Bash(swiftc:*)",
+      "Bash(xxd:*)",
+      "Bash(ruby -v:*)",
+      "Bash(gem list:*)",
+      "Bash(gem install:*)",
+      "Bash(ruby:*)",
+      "WebSearch",
+      "Bash(git --version)",
+      "Bash(git config:*)",
+      "Bash(pgrep:*)"
+    ]
+  }
+}

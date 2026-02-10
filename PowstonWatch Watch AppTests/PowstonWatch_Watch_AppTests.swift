@@ -6,7 +6,7 @@
 //
 
 import Testing
-@testable import PowstonWatch_Watch_App
+//@testable import PowstonWatch_Watch_App
 
 struct PowstonWatch_Watch_AppTests {
 

@@ -41,13 +41,16 @@ class BargainHunterAnalysis: ObservableObject {
     
     // MARK: - Run Analysis
     
-    func analyzeImports(config: AnalysisConfig) async -> BargainHunterResult? {
+    func analyzeImports(config: AnalysisConfig, latestCompleteDataDate: Date? = nil) async -> BargainHunterResult? {
         isAnalyzing = true
         error = nil
         progress = "Loading data..."
-        
-        let calendar = Calendar.current
-        let endDate = calendar.date(byAdding: .day, value: -1, to: Date())!
+
+        var calendar = Calendar.current
+        calendar.timeZone = config.timezone
+
+        // Use latestCompleteDataDate if available, otherwise fall back to yesterday
+        let endDate = latestCompleteDataDate ?? calendar.date(byAdding: .day, value: -1, to: Date())!
         let startDate = calendar.date(byAdding: .day, value: -config.analysisWindowDays, to: endDate)!
         
         // Fetch all records
@@ -76,6 +79,26 @@ class BargainHunterAnalysis: ObservableObject {
         progress = "Analyzing import timing..."
         let analyzedImports = imports.map { analyzeImport($0, config: config) }
         
+        // Diagnostic logging
+        let importsWithForecast = imports.filter { !$0.buyForecast.isEmpty }
+        let importsWithoutForecast = imports.filter { $0.buyForecast.isEmpty }
+        print("🏷️ Imports with forecast: \(importsWithForecast.count)")
+        print("🏷️ Imports without forecast: \(importsWithoutForecast.count)")
+
+        if let oldest = importsWithForecast.map({ $0.timestamp }).min(),
+           let newest = importsWithForecast.map({ $0.timestamp }).max() {
+            let df = DateFormatter()
+            df.dateFormat = "yyyy-MM-dd"
+            print("🏷️ Forecast data range: \(df.string(from: oldest)) to \(df.string(from: newest))")
+        }
+
+        if let oldestWithout = importsWithoutForecast.map({ $0.timestamp }).min(),
+           let newestWithout = importsWithoutForecast.map({ $0.timestamp }).max() {
+            let df = DateFormatter()
+            df.dateFormat = "yyyy-MM-dd"
+            print("🏷️ NO forecast range: \(df.string(from: oldestWithout)) to \(df.string(from: newestWithout))")
+        }
+        
         // Categorize
         progress = "Categorizing results..."
         let expensiveImports = analyzedImports.filter { $0.isExpensive }
@@ -84,10 +107,18 @@ class BargainHunterAnalysis: ObservableObject {
         // Build breakdown
         let breakdown = buildBreakdown(expensiveImports: expensiveImports)
         
-        // Extract actionable samples (Best-N failures sorted by overpaid)
+        // Extract actionable samples (Best-N failures sorted by overpaid, deduped by timestamp)
+        var seenTimestamps: Set<Date> = []
         let couldHaveWaited = expensiveImports
             .filter { $0.category == .bestNFailure }
             .sorted { $0.overpaidCents > $1.overpaidCents }
+            .filter { imp in
+                if seenTimestamps.contains(imp.context.timestamp) {
+                    return false
+                }
+                seenTimestamps.insert(imp.context.timestamp)
+                return true
+            }
             .prefix(10)
             .map { toBargainHunterSample($0) }
         
@@ -104,8 +135,8 @@ class BargainHunterAnalysis: ObservableObject {
         // Calculate score/grade
         let (score, grade) = calculateGrade(
             totalImports: imports.count,
-            expensiveCount: expensiveImports.count,
-            bestNFailures: bestNFailures.count
+            bestNFailures: bestNFailures.count,
+            deadlinePressure: breakdown.deadlinePressure.count
         )
         
         let result = BargainHunterResult(
@@ -160,11 +191,8 @@ class BargainHunterAnalysis: ObservableObject {
     }
     
     // MARK: - Extract Imports
-    
+
     private func extractImports(from records: [ActionRecord], config: AnalysisConfig) -> [ImportContext] {
-        var calendar = Calendar.current
-        calendar.timeZone = config.timezone
-        
         return records.compactMap { record -> ImportContext? in
             // Must be an import with meaningful energy
             guard record.isImport,
@@ -175,42 +203,31 @@ class BargainHunterAnalysis: ObservableObject {
                 return nil
             }
             
-            // Parse values JSON for forecast and decision context
-            var buyForecast: [Double] = []
-            var activeFloor: Double = 0
+            // Use existing DecisionValues parsing (same as DecisionEfficiencyAnalysis)
+            let dv = record.decisionValues
+            let buyForecast = dv?.buyForecast ?? []
+            
+            // Get SOC from record or decision values
+            let soc = record.batterySoc ?? dv?.batterySoc ?? 0
+            
+            // Parse decisions for priority and reason from valuesJson
             var priority: Int = 0
             var reason: String? = nil
-            var soc: Double = record.batterySoc ?? 0
+            var activeFloor: Double = 0
             
             if let valuesJson = record.valuesJson,
                let data = valuesJson.data(using: .utf8),
-               let values = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                
-                // Buy forecast (24 hourly values)
-                if let forecast = values["buy_forecast"] as? [Double] {
-                    buyForecast = forecast
-                }
-                
-                // Battery SOC from values if not in record
-                if soc == 0, let valueSoc = values["battery_soc"] as? Double {
-                    soc = valueSoc
-                }
-                
-                // Parse decisions for active floor and priority
-                if let decisions = values["decisions"] as? [String: Any],
-                   let decisionList = decisions["decisions"] as? [[String: Any]] {
-                    for decision in decisionList {
-                        if decision["applied"] as? Bool == true {
-                            priority = decision["priority"] as? Int ?? 0
-                            reason = decision["reason"] as? String
-                            if let decisionValues = decision["values"] as? [String: Any] {
-                                activeFloor = decisionValues["active_floor"] as? Double ?? 0
-                                if soc == 0, let decisionSoc = decisionValues["soc"] as? Double {
-                                    soc = decisionSoc
-                                }
-                            }
-                            break
+               let values = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let decisions = values["decisions"] as? [String: Any],
+               let decisionList = decisions["decisions"] as? [[String: Any]] {
+                for decision in decisionList {
+                    if decision["applied"] as? Bool == true {
+                        priority = decision["priority"] as? Int ?? 0
+                        reason = decision["reason"] as? String
+                        if let decisionValues = decision["values"] as? [String: Any] {
+                            activeFloor = decisionValues["active_floor"] as? Double ?? 0
                         }
+                        break
                     }
                 }
             }
@@ -351,13 +368,14 @@ class BargainHunterAnalysis: ObservableObject {
         var calendar = Calendar.current
         calendar.timeZone = config.timezone
         
-        var byHour: [Int: (count: Int, totalPrice: Double, forecastHadCheap: Int, couldWait: Int)] = [:]
+        var byHour: [Int: (count: Int, totalPrice: Double, totalCost: Double, forecastHadCheap: Int, couldWait: Int)] = [:]
         
         for imp in expensiveImports {
             let hour = calendar.component(.hour, from: imp.context.timestamp)
-            var stats = byHour[hour] ?? (0, 0, 0, 0)
+            var stats = byHour[hour] ?? (0, 0, 0, 0, 0)
             stats.count += 1
             stats.totalPrice += imp.context.buyPrice
+            stats.totalCost += imp.context.buyPrice * imp.context.energyKwh
             if imp.cheapestInForecast <= Self.cheapThreshold {
                 stats.forecastHadCheap += 1
             }
@@ -372,6 +390,7 @@ class BargainHunterAnalysis: ObservableObject {
                 hour: hour,
                 count: stats.count,
                 avgPrice: stats.count > 0 ? stats.totalPrice / Double(stats.count) : 0,
+                totalCostCents: stats.totalCost,
                 forecastHadCheap: stats.forecastHadCheap,
                 couldWait: stats.couldWait
             )
@@ -410,27 +429,27 @@ class BargainHunterAnalysis: ObservableObject {
     }
     
     // MARK: - Grade Calculation
-    
-    private func calculateGrade(totalImports: Int, expensiveCount: Int, bestNFailures: Int) -> (Int, String) {
+
+    private func calculateGrade(totalImports: Int, bestNFailures: Int, deadlinePressure: Int) -> (Int, String) {
         guard totalImports > 0 else { return (100, "A") }
         
-        // Score based on:
-        // - % of imports that were cheap (higher = better)
-        // - % of expensive that were Best-N failures (lower = better)
+        // Grade based on AVOIDABLE mistakes only:
+        // - Best-N failures: fully avoidable (100% weight)
+        // - Deadline pressure: partially avoidable - start charging earlier (50% weight)
+        // - Forecast miss: not system's fault (0% weight)
+        // - No forecast: data issue (0% weight)
         
-        let cheapPercent = Double(totalImports - expensiveCount) / Double(totalImports) * 100
-        let bestNFailureRate = expensiveCount > 0 ? Double(bestNFailures) / Double(expensiveCount) * 100 : 0
-        
-        // Weight: 60% cheap rate, 40% inverse of Best-N failure rate
-        let score = Int(cheapPercent * 0.6 + (100 - bestNFailureRate) * 0.4)
+        let avoidableCount = Double(bestNFailures) + Double(deadlinePressure) * 0.5
+        let avoidableRate = avoidableCount / Double(totalImports) * 100
+        let score = max(0, min(100, Int(100 - avoidableRate)))
         
         let grade: String
         switch score {
-        case 90...100: grade = "A"
-        case 80..<90: grade = "B+"
-        case 70..<80: grade = "B"
-        case 60..<70: grade = "C+"
-        case 50..<60: grade = "C"
+        case 95...100: grade = "A"
+        case 85..<95: grade = "B+"
+        case 75..<85: grade = "B"
+        case 65..<75: grade = "C+"
+        case 55..<65: grade = "C"
         default: grade = "D"
         }
         
@@ -581,10 +600,6 @@ struct CategoryStats: Codable, Sendable {
     var totalKwh: Double = 0
     var totalCostCents: Double = 0
     var overpaidCents: Double = 0
-    
-    var percent: Double {
-        0 // Calculated in view with total
-    }
 }
 
 struct BargainHunterSample: Codable, Sendable, Identifiable {
@@ -617,12 +632,17 @@ struct HourStats: Codable, Sendable, Identifiable {
     let hour: Int
     let count: Int
     let avgPrice: Double
+    let totalCostCents: Double
     let forecastHadCheap: Int
     let couldWait: Int
     
     var forecastHadCheapPercent: Double {
         guard count > 0 else { return 0 }
         return Double(forecastHadCheap) / Double(count) * 100
+    }
+    
+    var totalCostDollars: Double {
+        totalCostCents / 100.0
     }
 }
 
@@ -705,6 +725,27 @@ extension BargainHunterResult {
                 let priority = "P\(sample.priority)"
                 
                 lines.append("  \(time)  \(paid.padding(toLength: 6, withPad: " ", startingAt: 0))  \(best.padding(toLength: 5, withPad: " ", startingAt: 0))  \(away.padding(toLength: 5, withPad: " ", startingAt: 0))  \(soc.padding(toLength: 5, withPad: " ", startingAt: 0))  \(priority)")
+            }
+        }
+        lines.append("")
+        
+        // By hour
+        if !byHour.isEmpty {
+            lines.append(String(repeating: "-", count: 70))
+            lines.append("BY HOUR")
+            lines.append(String(repeating: "-", count: 70))
+            lines.append("")
+            lines.append("  Hour   Count   $ Cost    Avg ¢   Could Wait")
+            lines.append("  -----  ------  --------  ------  ----------")
+            
+            for stat in byHour.filter({ $0.count > 0 }) {
+                let hour = String(format: "%02d:00", stat.hour)
+                let count = String(stat.count)
+                let cost = String(format: "$%.0f", stat.totalCostDollars)
+                let avg = String(format: "%.1f", stat.avgPrice)
+                let couldWait = "\(stat.couldWait)/\(stat.count)"
+                
+                lines.append("  \(hour.padding(toLength: 5, withPad: " ", startingAt: 0))  \(count.padding(toLength: 6, withPad: " ", startingAt: 0))  \(cost.padding(toLength: 8, withPad: " ", startingAt: 0))  \(avg.padding(toLength: 6, withPad: " ", startingAt: 0))  \(couldWait)")
             }
         }
         lines.append("")

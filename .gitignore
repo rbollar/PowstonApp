@@ -1,0 +1,6 @@
+build/
+*.backup
+*.backup2
+*.working
+*.before_add_files
+*.localvolts_attempt

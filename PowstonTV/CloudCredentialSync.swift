@@ -19,6 +19,7 @@ class CloudCredentialSync {
         static let baseURL = "powston_cloud_base_url"
         static let siteId = "powston_cloud_site_id"
         static let inverterId = "powston_cloud_inverter_id"
+        static let siteName = "powston_cloud_site_name"
         static let lastSyncDate = "powston_cloud_last_sync"
     }
     
@@ -30,17 +31,18 @@ class CloudCredentialSync {
     // MARK: - Save Credentials (called from iOS app)
     
     /// Saves credentials to iCloud Key-Value Store for sync to other devices
-    func saveCredentials(apiKey: String, baseURL: String, siteId: Int, inverterId: Int) {
+    func saveCredentials(apiKey: String, baseURL: String, siteId: Int, inverterId: Int, siteName: String) {
         store.set(apiKey, forKey: Keys.apiKey)
         store.set(baseURL, forKey: Keys.baseURL)
         store.set(siteId, forKey: Keys.siteId)
         store.set(inverterId, forKey: Keys.inverterId)
+        store.set(siteName, forKey: Keys.siteName)
         store.set(Date().timeIntervalSince1970, forKey: Keys.lastSyncDate)
         
         // Request immediate sync
         store.synchronize()
         
-        print("☁️ Saved credentials to iCloud KVS")
+        print("☁️ Saved credentials to iCloud KVS (site: \(siteName))")
     }
     
     /// Clears credentials from iCloud (for logout)
@@ -49,6 +51,7 @@ class CloudCredentialSync {
         store.removeObject(forKey: Keys.baseURL)
         store.removeObject(forKey: Keys.siteId)
         store.removeObject(forKey: Keys.inverterId)
+        store.removeObject(forKey: Keys.siteName)
         store.removeObject(forKey: Keys.lastSyncDate)
         store.synchronize()
         
@@ -62,6 +65,7 @@ class CloudCredentialSync {
         let baseURL: String
         let siteId: Int
         let inverterId: Int
+        let siteName: String
         let lastSyncDate: Date?
     }
     
@@ -79,6 +83,7 @@ class CloudCredentialSync {
         let baseURL = store.string(forKey: Keys.baseURL) ?? "https://app.powston.com"
         let siteId = Int(store.longLong(forKey: Keys.siteId))
         let inverterId = Int(store.longLong(forKey: Keys.inverterId))
+        let siteName = store.string(forKey: Keys.siteName) ?? "My Site"
         
         let lastSyncTimestamp = store.double(forKey: Keys.lastSyncDate)
         let lastSyncDate = lastSyncTimestamp > 0 ? Date(timeIntervalSince1970: lastSyncTimestamp) : nil
@@ -88,6 +93,7 @@ class CloudCredentialSync {
             baseURL: baseURL,
             siteId: siteId,
             inverterId: inverterId,
+            siteName: siteName,
             lastSyncDate: lastSyncDate
         )
     }
@@ -121,7 +127,7 @@ class CloudCredentialSync {
                let changedKeys = userInfo[NSUbiquitousKeyValueStoreChangedKeysKey] as? [String] {
                 
                 // Only trigger if credential keys changed
-                let credentialKeys = [Keys.apiKey, Keys.siteId, Keys.inverterId, Keys.baseURL]
+                let credentialKeys = [Keys.apiKey, Keys.siteId, Keys.inverterId, Keys.baseURL, Keys.siteName]
                 let relevantChange = changedKeys.contains { credentialKeys.contains($0) }
                 
                 if relevantChange {

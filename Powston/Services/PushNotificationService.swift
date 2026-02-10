@@ -12,9 +12,16 @@ class PushNotificationService {
     
     // MARK: - Configuration
     
-    // TODO: Update this URL to your server
-    private let serverURL = "https://your-server.com"  // e.g., "https://harriet.yourdomain.com:8420"
-    private let sharedSecret = "your-shared-secret-here"  // Must match server config
+    private let serverURL = "https://push.bollar.com"
+    private let sharedSecret = "RU2j*XV9FDYHvvHZXU-ZhWg!i-dwwqM2"
+    
+    private var apnsEnvironment: String {
+        #if DEBUG
+        return "sandbox"
+        #else
+        return "production"
+        #endif
+    }
     
     // MARK: - Registration
     
@@ -22,12 +29,15 @@ class PushNotificationService {
     func register(
         deviceToken: String,
         state: String,
-        network: String?,
-        tariff: String?,
+        network: String,
+        tariff: String,
+        exportTariff: String,
+        marketCosts: Double?,
         sellAbove: Double?,
         sellBelow: Double?,
         buyAbove: Double?,
-        buyBelow: Double?
+        buyBelow: Double?,
+        spikeThreshold: Double?
     ) async -> Bool {
         guard let url = URL(string: "\(serverURL)/api/push/register") else {
             print("❌ Push registration: Invalid URL")
@@ -42,13 +52,17 @@ class PushNotificationService {
         let payload: [String: Any] = [
             "device_token": deviceToken,
             "state": state,
-            "network": network as Any,
-            "tariff": tariff as Any,
+            "network": network,
+            "tariff": tariff,
+            "export_tariff": exportTariff,
+            "market_costs": marketCosts ?? 2,
+            "apns_environment": apnsEnvironment,
             "thresholds": [
                 "sell_above": sellAbove as Any,
                 "sell_below": sellBelow as Any,
                 "buy_above": buyAbove as Any,
                 "buy_below": buyBelow as Any,
+                "spike_threshold": spikeThreshold as Any,
             ]
         ]
         
@@ -65,7 +79,7 @@ class PushNotificationService {
             if httpResponse.statusCode == 200 {
                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let action = json["action"] as? String {
-                    print("✅ Push registration: \(action)")
+                    print("✅ Push registration (\(apnsEnvironment)): \(action)")
                 }
                 return true
             } else {
@@ -131,14 +145,27 @@ class PushNotificationService {
             return false
         }
         
+        // Need state, network, and tariff
+        guard let state = site.state, !state.isEmpty,
+              let network = site.network, !network.isEmpty,
+              let tariff = site.tariff, !tariff.isEmpty else {
+            print("❌ Push registration: Missing site info (state/network/tariff)")
+            return false
+        }
+        
+        // Export tariff - same as tariff in QLD, may differ elsewhere
+        let exportTariff = site.exportTariff ?? tariff
+        
+        // Market costs - null means 2 (standard), higher for Amber
+        let marketCosts = site.marketCosts
+        
         // Get thresholds from UserDefaults
         let priceAlertsEnabled = UserDefaults.standard.bool(forKey: "price_alerts_enabled")
         guard priceAlertsEnabled else {
-            // If alerts disabled, unregister
             return await unregister(deviceToken: token)
         }
         
-        let sellAbove: Double? = UserDefaults.standard.bool(forKey: "sell_above_enabled") 
+        let sellAbove: Double? = UserDefaults.standard.bool(forKey: "sell_above_enabled")
             ? UserDefaults.standard.double(forKey: "sell_above_threshold") : nil
         let sellBelow: Double? = UserDefaults.standard.bool(forKey: "sell_below_enabled")
             ? UserDefaults.standard.double(forKey: "sell_below_threshold") : nil
@@ -146,23 +173,27 @@ class PushNotificationService {
             ? UserDefaults.standard.double(forKey: "buy_above_threshold") : nil
         let buyBelow: Double? = UserDefaults.standard.bool(forKey: "buy_below_enabled")
             ? UserDefaults.standard.double(forKey: "buy_below_threshold") : nil
+        let spikeThreshold: Double? = UserDefaults.standard.bool(forKey: "spike_alerts_enabled")
+            ? UserDefaults.standard.double(forKey: "spike_threshold") * 10  // ¢/kWh → $/MWh
+            : nil
         
-        // Check if any threshold is actually enabled
-        let hasAnyThreshold = sellAbove != nil || sellBelow != nil || buyAbove != nil || buyBelow != nil
+        let hasAnyThreshold = sellAbove != nil || sellBelow != nil || buyAbove != nil || buyBelow != nil || spikeThreshold != nil
         guard hasAnyThreshold else {
-            // No thresholds enabled, unregister
             return await unregister(deviceToken: token)
         }
         
         return await register(
             deviceToken: token,
-            state: site.state ?? "QLD",
-            network: site.network,
-            tariff: site.tariff,
+            state: state,
+            network: network,
+            tariff: tariff,
+            exportTariff: exportTariff,
+            marketCosts: marketCosts,
             sellAbove: sellAbove,
             sellBelow: sellBelow,
             buyAbove: buyAbove,
-            buyBelow: buyBelow
+            buyBelow: buyBelow,
+            spikeThreshold: spikeThreshold
         )
     }
 }

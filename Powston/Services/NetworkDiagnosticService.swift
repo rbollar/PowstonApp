@@ -62,8 +62,7 @@ struct DiagnosticReport {
 }
 
 // MARK: - Network Diagnostic Service
-@MainActor
-class NetworkDiagnosticService: ObservableObject {
+class NetworkDiagnosticService {
     static let shared = NetworkDiagnosticService()
     
     private let timeout: TimeInterval = 5.0

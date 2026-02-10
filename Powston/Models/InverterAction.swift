@@ -4,6 +4,10 @@
 //
 //  Data model for inverter actions with multi-inverter support
 //
+//  CHANGES FOR DECISION EFFICIENCY:
+//  - Added earnings, costs fields from API response
+//  - These are already present in your current file, verify they decode correctly
+//
 
 import Foundation
 
@@ -19,6 +23,14 @@ struct InverterAction: Identifiable, Codable {
     
     // Raw values JSON - we'll extract what we need
     let valuesJSON: String?
+    
+    // Meter truth - actual energy moved during this interval
+    var energyImport: Double?
+    var energyExport: Double?
+    
+    // Financial data from API (cents)
+    var earnings: Double?
+    var costs: Double?
     
     // Extracted fields (populated after parsing)
     var batterySoc: Double?
@@ -69,6 +81,10 @@ struct InverterAction: Identifiable, Codable {
         case intervalTime = "interval_time"
         case createdAt = "created_at"
         case valuesJSON = "values"
+        case energyImport = "energy_import"
+        case energyExport = "energy_export"
+        case earnings
+        case costs
     }
     
     init(from decoder: Decoder) throws {
@@ -82,14 +98,83 @@ struct InverterAction: Identifiable, Codable {
         intervalTime = try container.decodeIfPresent(String.self, forKey: .intervalTime) ?? ""
         createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
         
-        // Values comes as a JSON string, not an object
-        valuesJSON = try container.decodeIfPresent(String.self, forKey: .valuesJSON)
+        // Meter truth - actual energy moved during this interval
+        energyImport = try container.decodeIfPresent(Double.self, forKey: .energyImport)
+        energyExport = try container.decodeIfPresent(Double.self, forKey: .energyExport)
         
-        // Parse values JSON to extract key fields
-        parseValues()
+        // Financial data
+        earnings = try container.decodeIfPresent(Double.self, forKey: .earnings)
+        costs = try container.decodeIfPresent(Double.self, forKey: .costs)
+        
+        // Values comes as a JSON string, not an object
+        let valuesStr = try container.decodeIfPresent(String.self, forKey: .valuesJSON)
+        valuesJSON = valuesStr
+        
+        // Parse values JSON inline to extract key fields
+        if let json = valuesStr, let data = json.data(using: .utf8) {
+            do {
+                if let values = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    // Direct values
+                    buyPrice = values["buy_price"] as? Double
+                    sellPrice = values["sell_price"] as? Double
+                    gridPower = values["grid_power"] as? Double ?? values["pgrid"] as? Double
+                    solarPower = values["solar_power"] as? Double ?? values["ppv"] as? Double
+                    housePower = values["house_power"] as? Double
+                    batteryPower = values["battery_power"] as? Double
+                    batterySoc = values["battery_soc"] as? Double
+                    inverterSerial = values["serial_number"] as? String
+                    
+                    // Check runtime_params for more detailed data
+                    if let runtimeParams = values["runtime_params"] as? [String: Any] {
+                        if batterySoc == nil {
+                            batterySoc = runtimeParams["battery_soc"] as? Double
+                        }
+                        if gridPower == nil {
+                            gridPower = runtimeParams["grid_power"] as? Double ?? runtimeParams["pgrid"] as? Double
+                        }
+                        if solarPower == nil {
+                            solarPower = runtimeParams["solar_power"] as? Double ?? runtimeParams["ppv"] as? Double
+                        }
+                        if housePower == nil {
+                            housePower = runtimeParams["house_power"] as? Double
+                        }
+                        if batteryPower == nil {
+                            batteryPower = runtimeParams["battery_power"] as? Double
+                        }
+                        
+                        // Extract nested inverter data (for multi-inverter sites)
+                        var nested: [String: NestedInverterSOC] = [:]
+                        for (key, value) in runtimeParams {
+                            if key.hasPrefix("A") && key.count > 8,
+                               let inverterData = value as? [String: Any] {
+                                let soc = inverterData["battery_soc"] as? Double
+                                let grid = inverterData["grid_power"] as? Double
+                                let solar = inverterData["solar_power"] as? Double ?? inverterData["ppv"] as? Double
+                                let battery = inverterData["battery_power"] as? Double
+                                let capacity = inverterData["battery_capacity"] as? Double
+                                
+                                nested[key] = NestedInverterSOC(
+                                    serialNumber: key,
+                                    batterySoc: soc,
+                                    gridPower: grid,
+                                    solarPower: solar,
+                                    batteryPower: battery,
+                                    batteryCapacity: capacity
+                                )
+                            }
+                        }
+                        if !nested.isEmpty {
+                            nestedInverterData = nested
+                        }
+                    }
+                }
+            } catch {
+                print("⚠️ Failed to parse action values: \(error)")
+            }
+        }
     }
     
-    init(id: Int, inverterId: Int, action: String, reason: String, time: String, intervalTime: String, createdAt: String, valuesJSON: String?) {
+    init(id: Int, inverterId: Int, action: String, reason: String, time: String, intervalTime: String, createdAt: String, valuesJSON: String?, earnings: Double? = nil, costs: Double? = nil) {
         self.id = id
         self.inverterId = inverterId
         self.action = action
@@ -98,6 +183,8 @@ struct InverterAction: Identifiable, Codable {
         self.intervalTime = intervalTime
         self.createdAt = createdAt
         self.valuesJSON = valuesJSON
+        self.earnings = earnings
+        self.costs = costs
         parseValues()
     }
     
@@ -135,36 +222,7 @@ struct InverterAction: Identifiable, Codable {
                     if batteryPower == nil {
                         batteryPower = runtimeParams["battery_power"] as? Double
                     }
-                    
-                    // Extract nested inverter data (for multi-inverter sites)
-                    var nested: [String: NestedInverterSOC] = [:]
-                    for (key, value) in runtimeParams {
-                        // Nested inverters are keyed by serial number (e.g., "A23B0200864")
-                        if key.hasPrefix("A") && key.count > 8,
-                           let inverterData = value as? [String: Any] {
-                            let soc = inverterData["battery_soc"] as? Double
-                            let grid = inverterData["grid_power"] as? Double
-                            let solar = inverterData["solar_power"] as? Double ?? inverterData["ppv"] as? Double
-                            let battery = inverterData["battery_power"] as? Double
-                            let capacity = inverterData["battery_capacity"] as? Double
-                            
-                            nested[key] = NestedInverterSOC(
-                                serialNumber: key,
-                                batterySoc: soc,
-                                gridPower: grid,
-                                solarPower: solar,
-                                batteryPower: battery,
-                                batteryCapacity: capacity
-                            )
-                        }
-                    }
-                    if !nested.isEmpty {
-                        nestedInverterData = nested
-                    }
                 }
-                
-                // Get serial number if available
-                inverterSerial = values["serial_number"] as? String
             }
         } catch {
             print("⚠️ Failed to parse action values: \(error)")
@@ -193,6 +251,16 @@ struct ActionSOCPoint: Identifiable {
     let inverterId: Int
     let inverterSerial: String?
     
+    init(time: Date, soc: Double, action: String, buyPrice: Double, sellPrice: Double, inverterId: Int, inverterSerial: String?) {
+        self.time = time
+        self.soc = soc
+        self.action = action
+        self.buyPrice = buyPrice
+        self.sellPrice = sellPrice
+        self.inverterId = inverterId
+        self.inverterSerial = inverterSerial
+    }
+    
     init(from action: InverterAction) {
         self.time = action.date ?? Date()
         self.soc = action.batterySoc ?? 0
@@ -202,7 +270,19 @@ struct ActionSOCPoint: Identifiable {
         self.inverterId = action.inverterId
         self.inverterSerial = action.inverterSerial
     }
+    
+    init(from record: ActionRecord) {
+        self.time = record.intervalTime
+        self.soc = record.batterySoc ?? 0
+        self.action = record.action
+        self.buyPrice = record.buyPrice ?? 0
+        self.sellPrice = record.sellPrice ?? 0
+        self.inverterId = record.inverterId
+        self.inverterSerial = nil  // ActionRecord doesn't store serial
+    }
 }
+
+
 
 // MARK: - Site Actions (combined view for multi-inverter)
 struct SiteActionsData {
@@ -244,20 +324,17 @@ struct SiteActionsData {
                 }
             }
             
-            if totalCapacity > 0 {
+            if totalCapacity > 0, let firstAction = actions.first {
                 let avgSOC = weightedSOC / totalCapacity
-                let firstAction = actions[0]
+                // Create point with combined/averaged values
                 points.append(ActionSOCPoint(
-                    from: InverterAction(
-                        id: firstAction.id,
-                        inverterId: firstAction.inverterId,
-                        action: firstAction.action,
-                        reason: firstAction.reason,
-                        time: firstAction.time,
-                        intervalTime: firstAction.intervalTime,
-                        createdAt: firstAction.createdAt,
-                        valuesJSON: nil
-                    )
+                    time: time,
+                    soc: avgSOC,
+                    action: firstAction.action,
+                    buyPrice: firstAction.buyPrice ?? 0,
+                    sellPrice: firstAction.sellPrice ?? 0,
+                    inverterId: firstAction.inverterId,
+                    inverterSerial: nil  // Combined, no single serial
                 ))
             }
         }
@@ -295,6 +372,35 @@ struct ActionsFetchConfig {
     }
 }
 
+// MARK: - Paginated Response Wrapper
+struct InverterActionsResponse: Codable {
+    let actions: [InverterAction]
+    let page: Int?
+    let pageSize: Int?
+    let total: Int?
+    let totalPages: Int?
+    
+    // Convenience to match expected interface
+    var items: [InverterAction] { actions }
+    
+    enum CodingKeys: String, CodingKey {
+        case actions
+        case page
+        case pageSize = "page_size"
+        case total
+        case totalPages = "total_pages"
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        actions = try container.decodeIfPresent([InverterAction].self, forKey: .actions) ?? []
+        page = try container.decodeIfPresent(Int.self, forKey: .page)
+        pageSize = try container.decodeIfPresent(Int.self, forKey: .pageSize)
+        total = try container.decodeIfPresent(Int.self, forKey: .total)
+        totalPages = try container.decodeIfPresent(Int.self, forKey: .totalPages)
+    }
+}
+
 // MARK: - Date Rounding Helper
 extension Date {
     func rounded(toNearest seconds: TimeInterval) -> Date {
@@ -305,6 +411,22 @@ extension Date {
 
 // MARK: - Display Helpers
 extension InverterAction {
+    // Check if this action has meaningful data (not just a silent placeholder)
+    var hasMeaningfulData: Bool {
+        // If action is "silent", check for actual inverter data (not just grid from meter)
+        if action.lowercased() == "silent" {
+            // Must have SOC or inverter-specific power readings
+            // Grid alone doesn't count - it can come from utility meter
+            let hasSOC = batterySoc != nil && batterySoc! > 0
+            let hasInverterPower = (solarPower != nil && solarPower != 0) ||
+                                   (batteryPower != nil && batteryPower != 0) ||
+                                   (housePower != nil && housePower != 0)
+            return hasSOC || hasInverterPower
+        }
+        // Non-silent actions are considered meaningful
+        return true
+    }
+    
     // Simplified action name for display
     var displayAction: String {
         let lower = action.lowercased()
@@ -320,7 +442,9 @@ extension InverterAction {
     // First line of reason (summary)
     var reasonSummary: String {
         let lines = reason.components(separatedBy: "\n")
-        guard let first = lines.first else { return reason }
+        guard let first = lines.first?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            return reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         // Truncate if too long
         if first.count > 60 {
             return String(first.prefix(57)) + "..."

@@ -4,5 +4,11 @@
 <dict>
 	<key>com.apple.developer.icloud-container-identifiers</key>
 	<array/>
+	<key>com.apple.developer.ubiquity-kvstore-identifier</key>
+	<string>$(TeamIdentifierPrefix)com.bollar.Powston</string>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.bollar.powston.watch</string>
+	</array>
 </dict>
 </plist>

@@ -249,8 +249,7 @@ class ForecastAdvisorBuilder {
     
     private func buildForecastPeriods(peakStartHour: Int, peakEndHour: Int) -> [ForecastPeriodInfo] {
         guard let buyForecast = inverterResponse.buyForecast,
-              let sellForecast = inverterResponse.sellForecast,
-              let startDate = inverterResponse.forecastStartDate else {
+              let sellForecast = inverterResponse.sellForecast else {
             return []
         }
         

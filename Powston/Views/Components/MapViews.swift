@@ -9,7 +9,22 @@ import MapKit
 // MARK: - Site Detail View
 struct SiteDetailView: View {
     let site: Site
+    @EnvironmentObject var api: PowstonAPI
     @State private var position: MapCameraPosition
+    
+    // Editable fields
+    @State private var editedDisplayName: String = ""
+    @State private var editedPvoutputApiKey: String = ""
+    @State private var isEditingDisplayName = false
+    @State private var isEditingPvoutputApiKey = false
+    
+    // Alerts and sheets
+    @State private var showHAWarning = false
+    @State private var showMqttInfo = false
+    @State private var showPvoutputInfo = false
+    @State private var showSaveError = false
+    @State private var saveErrorMessage = ""
+    @State private var isSaving = false
     
     init(site: Site) {
         self.site = site
@@ -20,10 +35,25 @@ struct SiteDetailView: View {
             ),
             span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
         )))
+        _editedDisplayName = State(initialValue: site.displayName ?? site.name)
+        _editedPvoutputApiKey = State(initialValue: site.pvoutputApiKey ?? "")
+    }
+    
+    var siteInverters: [Inverter] {
+        api.inverters.filter { $0.siteId == site.id }
+    }
+    
+    var hasDisplayNameChanged: Bool {
+        editedDisplayName != (site.displayName ?? site.name) && !editedDisplayName.isEmpty
+    }
+    
+    var hasPvoutputApiKeyChanged: Bool {
+        editedPvoutputApiKey != (site.pvoutputApiKey ?? "")
     }
     
     var body: some View {
         List {
+            // Map Section
             if site.latitude != nil && site.longitude != nil {
                 Section {
                     Map(position: $position) {
@@ -33,15 +63,724 @@ struct SiteDetailView: View {
                         ))
                         .tint(.green)
                     }
-                    .frame(height: 200)
+                    .frame(height: 180)
                     .cornerRadius(12)
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
                 }
             }
+            
+            // Site Info Section
+            Section("Site Information") {
+                // Editable Display Name
+                HStack {
+                    Text("Name")
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    if isEditingDisplayName {
+                        TextField("Display Name", text: $editedDisplayName)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 180)
+                            .multilineTextAlignment(.trailing)
+                        Button("Done") {
+                            if hasDisplayNameChanged {
+                                if site.haPublish == true {
+                                    showHAWarning = true
+                                } else {
+                                    saveDisplayName()
+                                }
+                            } else {
+                                isEditingDisplayName = false
+                            }
+                        }
+                        .font(.caption)
+                        .buttonStyle(.bordered)
+                    } else {
+                        Text(site.displayName ?? site.name)
+                        Button(action: { isEditingDisplayName = true }) {
+                            Image(systemName: "pencil")
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                
+                InfoRow(label: "State", value: site.state ?? "–")
+                InfoRow(label: "Network", value: (site.network ?? "–").capitalized)
+                if let location = site.location {
+                    InfoRow(label: "Address", value: location)
+                }
+                if let timezone = site.timezone {
+                    InfoRow(label: "Timezone", value: timezone)
+                }
+                if let brand = site.brand {
+                    InfoRow(label: "Brand", value: brand)
+                }
+            }
+            
+            // Capacity Section
+            Section("System Capacity") {
+                if let solar = site.installedSolar {
+                    InfoRow(label: "Solar", value: formatPower(solar), color: .yellow)
+                }
+                if let battery = site.installedBattery {
+                    InfoRow(label: "Battery", value: formatEnergy(battery), color: .green)
+                }
+//                if let gridLimit = site.gridPowerLimit {
+//                    InfoRow(label: "Grid Export Limit", value: formatPower(gridLimit), color: .blue)
+//                }
+                if let inverterPower = site.inverterPower {
+                    InfoRow(label: "Inverter Power", value: formatPower(inverterPower), color: .orange)
+                }
+            }
+            
+            // Tariffs Section
+            Section("Tariffs") {
+                if let tariff = site.tariff {
+                    InfoRow(label: "Import Tariff", value: tariff)
+                }
+                if let exportTariff = site.exportTariff {
+                    InfoRow(label: "Export Tariff", value: exportTariff)
+                }
+                
+                // Retailer detection
+                if site.localvoltsKey != nil || site.localvoltsPartnerId != nil {
+                    InfoRow(label: "Retailer", value: "LocalVolts", color: .purple)
+                } else if site.amberKey != nil || site.amberSiteId != nil {
+                    InfoRow(label: "Retailer", value: "Amber Electric", color: .orange)
+                }
+            }
+            
+            // Status Section
+            Section("Status") {
+                HStack {
+                    Text("Controlled")
+                    Spacer()
+                    Image(systemName: site.controlled == true ? "checkmark.circle.fill" : "xmark.circle")
+                        .foregroundColor(site.controlled == true ? .green : .secondary)
+                }
+                HStack {
+                    Text("Home Assistant")
+                    Spacer()
+                    Image(systemName: site.haPublish == true ? "checkmark.circle.fill" : "xmark.circle")
+                        .foregroundColor(site.haPublish == true ? .green : .secondary)
+                }
+                if site.pvoutputSiteId != nil {
+                    HStack {
+                        Text("PVOutput")
+                        Spacer()
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                    }
+                }
+                HStack {
+                    Text("Read Only")
+                    Spacer()
+                    Image(systemName: site.readOnly == true ? "checkmark.circle.fill" : "xmark.circle")
+                        .foregroundColor(site.readOnly == true ? .orange : .secondary)
+                }
+            }
+            
+            // Credentials Section
+            Section {
+                // MQTT credentials with info button
+                if site.mqttUser != nil || site.mqttPassword != nil {
+                    HStack {
+                        Text("MQTT")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                        Button(action: { showMqttInfo = true }) {
+                            Image(systemName: "info.circle")
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                        }
+                        .buttonStyle(.plain)
+                        Spacer()
+                    }
+                    
+                    if let mqttUser = site.mqttUser {
+                        InfoRow(label: "User", value: mqttUser)
+                    }
+                    if let mqttPassword = site.mqttPassword {
+                        MaskedCredentialRow(label: "Password", value: mqttPassword)
+                    }
+                }
+                
+                // PVOutput credentials with info button
+                if site.pvoutputSiteId != nil || site.pvoutputApiKey != nil || !editedPvoutputApiKey.isEmpty {
+                    if site.mqttUser != nil || site.mqttPassword != nil {
+                        Divider()
+                    }
+                    
+                    HStack {
+                        Text("PVOutput")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                        Button(action: { showPvoutputInfo = true }) {
+                            Image(systemName: "info.circle")
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                        }
+                        .buttonStyle(.plain)
+                        Spacer()
+                    }
+                    
+                    if let siteId = site.pvoutputSiteId {
+                        InfoRow(label: "Site ID", value: "\(siteId)")
+                    }
+                    
+                    // Editable PVOutput API Key
+                    EditableCredentialRow(
+                        label: "API Key",
+                        value: $editedPvoutputApiKey,
+                        isEditing: $isEditingPvoutputApiKey,
+                        hasChanged: hasPvoutputApiKeyChanged,
+                        isSaving: isSaving,
+                        onSave: savePvoutputApiKey
+                    )
+                }
+            } header: {
+                Text("Credentials")
+            } footer: {
+                if site.mqttUser != nil {
+                    Text("MQTT credentials are read-only. PVOutput API key can be edited.")
+                        .font(.caption)
+                }
+            }
+            
+            // Inverters Section
+            if !siteInverters.isEmpty {
+                Section("Inverters (\(siteInverters.count))") {
+                    ForEach(siteInverters) { inverter in
+                        InverterDetailCard(inverter: inverter)
+                    }
+                }
+            }
+            
+            // Control Link
+            Section {
+                NavigationLink(destination: ManualOverrideView()) {
+                    HStack {
+                        Image(systemName: "slider.horizontal.3")
+                            .foregroundColor(.blue)
+                        Text("Manual Control")
+                    }
+                }
+            }
         }
         .navigationTitle(site.displayName ?? site.name)
         .navigationBarTitleDisplayMode(.inline)
+        .alert("Home Assistant Warning", isPresented: $showHAWarning) {
+            Button("Cancel", role: .cancel) { }
+            Button("Rename Anyway") { saveDisplayName() }
+        } message: {
+            Text("This site has Home Assistant integration enabled. Renaming may require reconfiguring your Home Assistant setup to match the new name.")
+        }
+        .alert("Save Error", isPresented: $showSaveError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(saveErrorMessage)
+        }
+        .sheet(isPresented: $showMqttInfo) {
+            MqttInfoSheet()
+        }
+        .sheet(isPresented: $showPvoutputInfo) {
+            PvoutputInfoSheet()
+        }
+    }
+    
+    func saveDisplayName() {
+        guard hasDisplayNameChanged else {
+            isEditingDisplayName = false
+            return
+        }
+        
+        isSaving = true
+        Task {
+            let result = await api.updateSite(siteId: site.id, displayName: editedDisplayName)
+            await MainActor.run {
+                isSaving = false
+                switch result {
+                case .success:
+                    isEditingDisplayName = false
+                case .failure(let error):
+                    saveErrorMessage = error.localizedDescription
+                    showSaveError = true
+                }
+            }
+        }
+    }
+    
+    func savePvoutputApiKey() {
+        guard hasPvoutputApiKeyChanged else {
+            isEditingPvoutputApiKey = false
+            return
+        }
+        
+        isSaving = true
+        Task {
+            let result = await api.updateSite(siteId: site.id, pvoutputApiKey: editedPvoutputApiKey)
+            await MainActor.run {
+                isSaving = false
+                switch result {
+                case .success:
+                    isEditingPvoutputApiKey = false
+                case .failure(let error):
+                    saveErrorMessage = error.localizedDescription
+                    showSaveError = true
+                }
+            }
+        }
+    }
+    
+    func formatPower(_ watts: Int) -> String {
+        if watts >= 1000 {
+            return String(format: "%.1f kW", Double(watts) / 1000)
+        }
+        return "\(watts) W"
+    }
+    
+    func formatEnergy(_ wattHours: Int) -> String {
+        if wattHours >= 1000 {
+            return String(format: "%.1f kWh", Double(wattHours) / 1000)
+        }
+        return "\(wattHours) Wh"
+    }
+}
+
+// MARK: - Editable Credential Row
+struct EditableCredentialRow: View {
+    let label: String
+    @Binding var value: String
+    @Binding var isEditing: Bool
+    let hasChanged: Bool
+    let isSaving: Bool
+    let onSave: () -> Void
+    
+    @State private var isRevealed = false
+    
+    var body: some View {
+        HStack {
+            Text(label)
+                .foregroundColor(.secondary)
+            Spacer()
+            
+            if isEditing {
+                if isRevealed {
+                    TextField("", text: $value)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(maxWidth: 160)
+                        .multilineTextAlignment(.trailing)
+                        .autocapitalization(.none)
+                        .autocorrectionDisabled()
+                } else {
+                    SecureField("", text: $value)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 160)
+                        .multilineTextAlignment(.trailing)
+                }
+                
+                Button(action: { isRevealed.toggle() }) {
+                    Image(systemName: isRevealed ? "eye.slash" : "eye")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                
+                if isSaving {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Button("Save") { onSave() }
+                        .font(.caption)
+                        .buttonStyle(.bordered)
+                        .disabled(!hasChanged)
+                }
+            } else {
+                if value.isEmpty {
+                    Text("Not set")
+                        .foregroundColor(.secondary)
+                        .italic()
+                } else if isRevealed {
+                    Text(value)
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                } else {
+                    Text(String(repeating: "•", count: min(value.count, 16)))
+                        .foregroundColor(.secondary)
+                }
+                
+                if !value.isEmpty {
+                    Button(action: { isRevealed.toggle() }) {
+                        Image(systemName: isRevealed ? "eye.slash" : "eye")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                
+                Button(action: { isEditing = true }) {
+                    Image(systemName: "pencil")
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+// MARK: - MQTT Info Sheet
+struct MqttInfoSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("MQTT Integration")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    
+                    Text("MQTT (Message Queuing Telemetry Transport) allows Powston to publish your solar system data to Home Assistant or other smart home platforms.")
+                    
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Real-time data updates", systemImage: "bolt.fill")
+                        Label("Home Assistant integration", systemImage: "house.fill")
+                        Label("Custom automations", systemImage: "gearshape.2.fill")
+                    }
+                    .foregroundColor(.secondary)
+                    
+                    Divider()
+                    
+                    Text("Setup Guide")
+                        .font(.headline)
+                    
+                    Text("Use these credentials to configure the MQTT integration in Home Assistant. The broker address and port are provided in the Powston documentation.")
+                    
+                    Link(destination: URL(string: "https://powston.com.au/blog/using-powston-in-home-assistant")!) {
+                        HStack {
+                            Image(systemName: "book.fill")
+                            Text("View Setup Guide")
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                        }
+                        .padding()
+                        .background(Color.blue.opacity(0.1))
+                        .cornerRadius(10)
+                    }
+                }
+                .padding()
+            }
+            .navigationTitle("MQTT")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - PVOutput Info Sheet
+struct PvoutputInfoSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("PVOutput Integration")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    
+                    Text("PVOutput.org is a free service for sharing and comparing photovoltaic solar panel output data.")
+                    
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Track generation history", systemImage: "chart.line.uptrend.xyaxis")
+                        Label("Compare with neighbors", systemImage: "person.2.fill")
+                        Label("Public or private data", systemImage: "lock.shield.fill")
+                        Label("Detailed analytics", systemImage: "chart.bar.fill")
+                    }
+                    .foregroundColor(.secondary)
+                    
+                    Divider()
+                    
+                    Text("API Key")
+                        .font(.headline)
+                    
+                    Text("Your PVOutput API key allows Powston to upload your generation data automatically. You can find or generate your API key in your PVOutput account settings.")
+                    
+                    Link(destination: URL(string: "https://pvoutput.org")!) {
+                        HStack {
+                            Image(systemName: "sun.max.fill")
+                            Text("Visit PVOutput.org")
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                        }
+                        .padding()
+                        .background(Color.orange.opacity(0.1))
+                        .cornerRadius(10)
+                    }
+                }
+                .padding()
+            }
+            .navigationTitle("PVOutput")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Inverter Detail Card (with View Code button)
+struct InverterDetailCard: View {
+    @EnvironmentObject var api: PowstonAPI
+    let inverter: Inverter
+    @State private var showingCode = false
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: inverter.id == api.selectedInverterId ? "bolt.circle.fill" : "bolt.circle")
+                    .foregroundColor(inverter.id == api.selectedInverterId ? .green : .orange)
+                Text("\(inverter.manufacturer) \(inverter.productName)")
+                    .fontWeight(.medium)
+                Spacer()
+                if inverter.id == api.selectedInverterId {
+                    Text("Active")
+                        .font(.caption)
+                        .foregroundColor(.green)
+                }
+            }
+            
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Serial:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text(inverter.serialNumber)
+                        .font(.caption.monospaced())
+                }
+                
+                HStack(spacing: 16) {
+                    if let battery = inverter.batteryCapacity, battery > 0 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "battery.100")
+                                .font(.caption)
+                                .foregroundColor(.green)
+                            Text(formatEnergy(battery))
+                                .font(.caption)
+                        }
+                    }
+                    if let pv = inverter.pvCapacity, pv > 0 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "sun.max.fill")
+                                .font(.caption)
+                                .foregroundColor(.yellow)
+                            Text(formatPower(pv))
+                                .font(.caption)
+                        }
+                    }
+                    if let phases = inverter.phases {
+                        HStack(spacing: 4) {
+                            Image(systemName: "waveform")
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                            Text("\(phases)φ")
+                                .font(.caption)
+                        }
+                    }
+                }
+            }
+            
+            // View Code Button
+            Button {
+                showingCode = true
+            } label: {
+                Label("View User Code", systemImage: "doc.text")
+                    .font(.caption)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .padding(.top, 4)
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if inverter.id != api.selectedInverterId {
+                api.selectedInverterId = inverter.id
+                Task { await api.fetchData() }
+            }
+        }
+        .fullScreenCover(isPresented: $showingCode) {
+            UserCodeView(inverterId: inverter.id, inverterName: inverter.productName)
+        }
+    }
+    
+    func formatPower(_ watts: Int) -> String {
+        if watts >= 1000 {
+            return String(format: "%.1f kW", Double(watts) / 1000)
+        }
+        return "\(watts) W"
+    }
+    
+    func formatEnergy(_ wattHours: Int) -> String {
+        if wattHours >= 1000 {
+            return String(format: "%.1f kWh", Double(wattHours) / 1000)
+        }
+        return "\(wattHours) Wh"
+    }
+}
+
+// MARK: - User Code View (Full Screen)
+struct UserCodeView: View {
+    @EnvironmentObject var api: PowstonAPI
+    @Environment(\.dismiss) var dismiss
+    
+    let inverterId: Int
+    let inverterName: String
+    
+    @State private var code: String?
+    @State private var isLoading = true
+    @State private var error: String?
+    @State private var copied = false
+    
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading {
+                    VStack(spacing: 16) {
+                        ProgressView()
+                        Text("Loading user code...")
+                            .foregroundColor(.secondary)
+                    }
+                } else if let error = error {
+                    VStack(spacing: 16) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.largeTitle)
+                            .foregroundColor(.orange)
+                        Text(error)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                        
+                        Button("Retry") {
+                            Task { await loadCode() }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    .padding()
+                } else if let code = code {
+                    ScrollView([.horizontal, .vertical]) {
+                        Text(code)
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .padding()
+                    }
+                    .background(Color(.systemBackground))
+                } else {
+                    Text("No code available")
+                        .foregroundColor(.secondary)
+                }
+            }
+            .navigationTitle("Inverter \(String(inverterId))")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+                
+                if code != nil {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            UIPasteboard.general.string = code
+                            copied = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                copied = false
+                            }
+                        } label: {
+                            Label(copied ? "Copied!" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        }
+                    }
+                }
+            }
+        }
+        .task {
+            await loadCode()
+        }
+        .onAppear {
+            OrientationManager.shared.allowLandscape()
+        }
+        .onDisappear {
+            OrientationManager.shared.lockToPortrait()
+        }
+    }
+    
+    func loadCode() async {
+        isLoading = true
+        error = nil
+        
+        if let fetchedCode = await api.fetchCurrentUserCode(inverterId: inverterId) {
+            code = fetchedCode
+        } else {
+            error = "Failed to load user code for inverter \(inverterId)"
+        }
+        
+        isLoading = false
+    }
+}
+
+// MARK: - Info Row Helper
+struct InfoRow: View {
+    let label: String
+    let value: String
+    var color: Color = .primary
+    
+    var body: some View {
+        HStack {
+            Text(label)
+                .foregroundColor(.secondary)
+            Spacer()
+            Text(value)
+                .foregroundColor(color)
+        }
+    }
+}
+
+// MARK: - Masked Credential Row (read-only, hidden by default)
+struct MaskedCredentialRow: View {
+    let label: String
+    let value: String
+    @State private var isRevealed = false
+    
+    var body: some View {
+        HStack {
+            Text(label)
+                .foregroundColor(.secondary)
+            Spacer()
+            if isRevealed {
+                Text(value)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+            } else {
+                Text(String(repeating: "•", count: min(value.count, 16)))
+                    .foregroundColor(.secondary)
+            }
+            Button(action: { isRevealed.toggle() }) {
+                Image(systemName: isRevealed ? "eye.slash" : "eye")
+                    .foregroundColor(.secondary)
+                    .font(.caption)
+            }
+            .buttonStyle(.plain)
+        }
     }
 }
 
@@ -255,7 +994,7 @@ struct SiteInfoCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(site.displayName ?? site.name)
                         .font(.headline)
-                    Text(site.location ?? "\(site.state)")
+                    Text(site.location ?? site.state ?? "–")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
@@ -274,7 +1013,7 @@ struct SiteInfoCard: View {
             
             HStack(spacing: 16) {
                 StatPill(icon: "bolt.fill", label: site.brand ?? "Unknown", color: .orange)
-                StatPill(icon: "network", label: site.network.capitalized, color: .blue)
+                StatPill(icon: "network", label: (site.network ?? "–").capitalized, color: .blue)
                 StatPill(icon: retailerIcon, label: detectedRetailer, color: .green)
             }
             
@@ -303,17 +1042,17 @@ struct SiteInfoCard: View {
                     }
                 }
                 
-                if let gridLimit = site.gridPowerLimit {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Grid Limit")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Text(formatPower(gridLimit))
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.blue)
-                    }
-                }
+//                if let gridLimit = site.gridPowerLimit {
+//                    VStack(alignment: .leading, spacing: 2) {
+//                        Text("Grid Limit")
+//                            .font(.caption2)
+//                            .foregroundColor(.secondary)
+//                        Text(formatPower(gridLimit))
+//                            .font(.subheadline)
+//                            .fontWeight(.semibold)
+//                            .foregroundColor(.blue)
+//                    }
+//                }
                 
                 Spacer()
             }

@@ -10,6 +10,8 @@ import SwiftUI
 struct ProfitIntelligenceCard: View {
     @EnvironmentObject var api: PowstonAPI
     @StateObject private var peakAnalysis = ArbitrageAnalysis()
+    @StateObject private var efficiencyAnalysis = DecisionEfficiencyAnalysis()
+    @StateObject private var savingsAnalysis = SavingsBreakdownAnalysis()
     
     var config: AnalysisConfig? {
         guard let site = api.selectedSite else { return nil }
@@ -54,13 +56,12 @@ struct ProfitIntelligenceCard: View {
     private var teaserText: some View {
         if api.isDemoMode {
             Text("Not available in demo mode")
+        } else if let result = savingsAnalysis.result {
+            Text(AnalysisHeadlines.savingsBreakdown(result: result))
         } else if let result = peakAnalysis.result {
-            HStack(spacing: 4) {
-                Text("Optimal floor: \(Int(result.floorAnalysis.optimalFloorPrice))¢")
-                Text("•")
-                Text("+$\(String(format: "%.2f", result.improvementDollars)) potential")
-                    .foregroundColor(.green)
-            }
+            Text(AnalysisHeadlines.peakExport(result: result))
+        } else if let result = efficiencyAnalysis.result {
+            Text(AnalysisHeadlines.decisionEfficiency(result: result))
         } else {
             Text("Run your first analysis")
         }
@@ -68,8 +69,19 @@ struct ProfitIntelligenceCard: View {
     
     private func loadCachedResults() {
         if let config = config {
+            // Load Savings Breakdown cached result (priority for headline)
+            if let cached = savingsAnalysis.getCachedResult(config: config) {
+                savingsAnalysis.result = cached
+            }
+            
+            // Load Peak Analysis cached result
             if let cached: PeakAnalysisResult = peakAnalysis.getCachedResult(config: config) {
                 peakAnalysis.result = cached
+            }
+            
+            // Load Decision Efficiency cached result
+            if let cached: DecisionEfficiencyResult = efficiencyAnalysis.getCachedResult(config: config) {
+                efficiencyAnalysis.result = cached
             }
         }
     }

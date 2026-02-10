@@ -9,35 +9,57 @@ struct SettingsView: View {
     @EnvironmentObject var api: PowstonAPI
     @AppStorage("api_key") private var apiKey = ""
     @AppStorage("appearance_mode") private var appearanceMode: AppearanceMode = .system
+    @AppStorage("dashboard_style") private var dashboardStyle: DashboardStyle = .sections
     @AppStorage("use_system_timezone") private var useSystemTimezone: Bool = true
-    @AppStorage("peak_start_hour") private var peakStartHour: Double = 16.0
-    @AppStorage("peak_end_hour") private var peakEndHour: Double = 21.0
-    @AppStorage("peak_enabled") private var peakEnabled: Bool = false
+    @AppStorage("use_dev_server") private var useDevServer: Bool = false
+    @AppStorage("single_site_mode") private var singleSiteMode: Bool = false
+    
+    // Price alerts (for summary badge)
     @AppStorage("price_alerts_enabled") private var priceAlertsEnabled: Bool = false
     @AppStorage("sell_above_enabled") private var sellAboveEnabled: Bool = false
-    @AppStorage("sell_above_threshold") private var sellAboveThreshold: Double = 40.0
     @AppStorage("sell_below_enabled") private var sellBelowEnabled: Bool = false
-    @AppStorage("sell_below_threshold") private var sellBelowThreshold: Double = 20.0
     @AppStorage("buy_above_enabled") private var buyAboveEnabled: Bool = false
-    @AppStorage("buy_above_threshold") private var buyAboveThreshold: Double = 40.0
     @AppStorage("buy_below_enabled") private var buyBelowEnabled: Bool = false
-    @AppStorage("buy_below_threshold") private var buyBelowThreshold: Double = 15.0
-    @State private var showingApiSetup = false
-    @StateObject private var notificationManager = NotificationManager.shared
     
+    // Peak hours (for summary badge)
+    @AppStorage("peak_enabled") private var peakEnabled: Bool = false
+    @AppStorage("peak_start_hour") private var peakStartHour: Double = 16.0
+    @AppStorage("peak_end_hour") private var peakEndHour: Double = 21.0
+    
+    // Leaderboard (for summary badge)
+    @AppStorage("leaderboard_enabled") private var leaderboardEnabled: Bool = true
+    @AppStorage("leaderboard_default_sort") private var leaderboardDefaultSort: String = "efficiency"
+    @AppStorage("comparison_buy_rate") private var comparisonBuyRate: Double = 33.0
+    @AppStorage("comparison_sell_rate") private var comparisonSellRate: Double = 5.0
+    
+    // Scorecard
+    @AppStorage("scorecard_enabled") private var scorecardEnabled: Bool = true
+
+    // Optimization Goal
+    @AppStorage("optimization_goal") private var optimizationGoal: String = "balanced"
+
+    // Apple Intelligence
+    @AppStorage("enableAppleIntelligence") private var enableAppleIntelligence: Bool = true
+
+    @State private var showingApiSetup = false
+    @State private var userCoupons: [UserCoupon] = []
+    @State private var showDevOptions = false
+    @StateObject private var notificationManager = NotificationManager.shared
+
     var aboutURL: URL {
         if api.isDemoMode {
             return URL(string: "https://powston.com.au")!
-        } else if let site = api.sites.first {
+        } else if let site = api.selectedSite {
             return URL(string: "https://app.powston.com/summary/\(site.id)")!
         } else {
             return URL(string: "https://app.powston.com")!
         }
     }
-    
+
     var body: some View {
         NavigationStack {
             Form {
+                // MARK: - Connection
                 Section("Connection") {
                     if api.isDemoMode {
                         HStack {
@@ -51,8 +73,8 @@ struct SettingsView: View {
                             Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Connected").fontWeight(.medium)
-                                if let inverter = api.inverters.first(where: { $0.id == api.selectedInverterId }) {
-                                    Text("\(inverter.manufacturer) \(inverter.productName)")
+                                if let site = api.selectedSite {
+                                    Text(site.displayName ?? site.name)
                                         .font(.caption).foregroundColor(.secondary)
                                 }
                             }
@@ -76,8 +98,20 @@ struct SettingsView: View {
                             Text(error).font(.caption).foregroundColor(.orange)
                         }
                     }
+                    
+                    if api.sites.count > 1 {
+                        Toggle(isOn: $singleSiteMode) {
+                            VStack(alignment: .leading) {
+                                Text("Single Site Mode")
+                                Text("Show only the currently selected site")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
                 }
                 
+                // MARK: - Appearance
                 Section("Appearance") {
                     Picker("Theme", selection: $appearanceMode) {
                         ForEach(AppearanceMode.allCases) { mode in
@@ -85,517 +119,481 @@ struct SettingsView: View {
                         }
                     }.pickerStyle(.menu)
                     
+                    Picker("Dashboard Style", selection: $dashboardStyle) {
+                        ForEach(DashboardStyle.allCases, id: \.self) { style in
+                            HStack {
+                                Image(systemName: style.icon)
+                                Text(style.displayName)
+                            }.tag(style)
+                        }
+                    }.pickerStyle(.menu)
+                    
                     Toggle(isOn: $useSystemTimezone) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Use System Time")
-                            Text(useSystemTimezone ? "Brisbane (AEST)" : "Phone Local")
+                            Text("Use Site Timezone")
+                            Text(useSystemTimezone ? "Based on site location" : "Phone local time")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
                     }
                 }
                 
-                Section("Demo Mode") {
-                    Toggle("Use Demo Data", isOn: $api.demoModeEnabled)
-                        .onChange(of: api.demoModeEnabled) { _, newValue in
-                            if newValue { api.loadDemoData() }
-                            else {
-                                api.clearDemoData()
-                                if !apiKey.isEmpty { Task { await api.fetchSites() } }
-                            }
-                        }
-                    if api.demoModeEnabled {
+                // MARK: - Features (Nested)
+                Section("Features") {
+                    NavigationLink {
+                        LeaderboardSettingsView()
+                    } label: {
+                        SettingsRowWithBadge(
+                            icon: "chart.bar.fill",
+                            iconColor: .purple,
+                            title: "Leaderboard",
+                            badge: LeaderboardSettingsView.summary(
+                                enabled: leaderboardEnabled,
+                                buyRate: comparisonBuyRate,
+                                sellRate: comparisonSellRate,
+                                defaultSort: leaderboardDefaultSort
+                            )
+                        )
+                    }
+                    
+                    NavigationLink {
+                        PriceAlertsSettingsView()
+                    } label: {
+                        SettingsRowWithBadge(
+                            icon: "bell.badge.fill",
+                            iconColor: .blue,
+                            title: "Price & Spike Alerts",
+                            badge: PriceAlertsSettingsView.summary(
+                                enabled: priceAlertsEnabled,
+                                sellAbove: sellAboveEnabled,
+                                sellBelow: sellBelowEnabled,
+                                buyAbove: buyAboveEnabled,
+                                buyBelow: buyBelowEnabled
+                            )
+                        )
+                    }
+                    
+                    NavigationLink {
+                        PeakHoursSettingsView()
+                    } label: {
+                        SettingsRowWithBadge(
+                            icon: "clock.badge.exclamationmark.fill",
+                            iconColor: .orange,
+                            title: "Peak Hours",
+                            badge: PeakHoursSettingsView.summary(
+                                enabled: peakEnabled,
+                                startHour: peakStartHour,
+                                endHour: peakEndHour
+                            )
+                        )
+                    }
+
+                    NavigationLink {
+                        LocalVoltsSetupView()
+                    } label: {
+                        SettingsRowWithBadge(
+                            icon: "bolt.circle.fill",
+                            iconColor: .orange,
+                            title: "LocalVolts Sync",
+                            badge: LocalVoltsSetupView.summary()
+                        )
+                    }
+
+                    Toggle(isOn: $scorecardEnabled) {
                         HStack {
-                            Image(systemName: "info.circle.fill").foregroundColor(.blue)
-                            Text("Demo data is active. Disable to use real API data.")
-                                .font(.caption).foregroundColor(.secondary)
-                        }
-                    }
-                }
-                
-                Section("Peak Hours") {
-                    Toggle("Enable Peak Period Markers", isOn: $peakEnabled)
-                    if peakEnabled {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Peak Start: \(formatHour(peakStartHour))").font(.subheadline)
-                            Slider(value: $peakStartHour, in: 0...23.75, step: 0.25)
-                            Text("Peak End: \(formatHour(peakEndHour))").font(.subheadline)
-                            Slider(value: $peakEndHour, in: 0...23.75, step: 0.25)
-                        }.padding(.vertical, 4)
-                        Button("Queensland Default (4 PM - 9 PM)") {
-                            peakStartHour = 16.0; peakEndHour = 21.0
-                        }.font(.caption)
-                        if peakStartHour >= peakEndHour {
-                            HStack {
-                                Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
-                                Text("Peak start must be before peak end").font(.caption).foregroundColor(.orange)
-                            }
-                        }
-                    }
-                }
-                
-                Section("Price Alerts") {
-                    if !notificationManager.isAuthorized {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Image(systemName: "bell.slash").foregroundColor(.orange)
-                                Text("Notifications not enabled").font(.subheadline)
-                            }
-                            Button("Enable Notifications") { notificationManager.requestPermission() }
-                                .buttonStyle(.borderedProminent)
-                            Text("Allow notifications to receive price alerts")
-                                .font(.caption).foregroundColor(.secondary)
-                        }.padding(.vertical, 4)
-                    } else {
-                        Toggle("Enable Price Alerts", isOn: $priceAlertsEnabled)
-                        if priceAlertsEnabled {
-                            PriceAlertRow(icon: "🚀", title: "Sell Above", subtitle: "High export price",
-                                enabled: $sellAboveEnabled, threshold: $sellAboveThreshold,
-                                currentPrice: api.data?.sellPrice, thresholdColor: .green, isAbove: true)
-                            PriceAlertRow(icon: "⚠️", title: "Sell Below", subtitle: "Low export price",
-                                enabled: $sellBelowEnabled, threshold: $sellBelowThreshold,
-                                currentPrice: api.data?.sellPrice, thresholdColor: .orange, isAbove: false)
-                            PriceAlertRow(icon: "💰", title: "Buy Below", subtitle: "Low import price",
-                                enabled: $buyBelowEnabled, threshold: $buyBelowThreshold,
-                                currentPrice: api.data?.buyPrice, thresholdColor: .blue, isAbove: false)
-                            PriceAlertRow(icon: "⚠️", title: "Buy Above", subtitle: "High import price",
-                                enabled: $buyAboveEnabled, threshold: $buyAboveThreshold,
-                                currentPrice: api.data?.buyPrice, thresholdColor: .red, isAbove: true)
-                            HStack {
-                                Image(systemName: "info.circle").foregroundColor(.blue)
-                                Text("Each alert type won't repeat within 30 minutes")
-                                    .font(.caption).foregroundColor(.secondary)
-                            }.padding(.top, 4)
-                        }
-                    }
-                }
-                
-                if !api.sites.isEmpty {
-                    Section("Sites & Inverters") {
-                        ForEach(api.sites) { site in
-                            NavigationLink(destination: SiteDetailView(site: site)) {
-                                HStack {
-                                    Image(systemName: "building.2.fill")
-                                        .foregroundColor(.blue)
-                                        .frame(width: 24)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(site.displayName ?? site.name)
-                                            .fontWeight(.medium)
-                                        HStack(spacing: 8) {
-                                            Text(site.state)
-                                            Text("•")
-                                            Text(site.network.capitalized)
-                                            if let solar = site.installedSolar {
-                                                Text("•")
-                                                Text(formatPower(solar))
-                                            }
-                                        }
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                    }
-                                }
-                            }
-                        }
-                        
-                        ForEach(api.inverters) { inverter in
-                            HStack {
-                                Image(systemName: inverter.id == api.selectedInverterId ? "bolt.circle.fill" : "bolt.circle")
-                                    .foregroundColor(inverter.id == api.selectedInverterId ? .green : .secondary)
-                                    .frame(width: 24)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("\(inverter.manufacturer) \(inverter.productName)")
-                                        .fontWeight(inverter.id == api.selectedInverterId ? .semibold : .regular)
-                                    Text("SN: \(inverter.serialNumber)")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                Spacer()
-                                if inverter.id == api.selectedInverterId {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundColor(.green)
-                                }
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                api.selectedInverterId = inverter.id
-                                Task { await api.fetchData() }
-                            }
-                        }
-                        
-                        NavigationLink(destination: AllSitesMapView(sites: api.sites)) {
-                            HStack {
-                                Image(systemName: "map.fill")
-                                    .foregroundColor(.green)
-                                    .frame(width: 24)
-                                Text("View All Sites on Map")
-                                Spacer()
-                                Text("\(api.sites.count)")
+                            Image(systemName: "gauge.with.dots.needle.33percent")
+                                .foregroundColor(.cyan)
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Performance Scorecard")
+                                Text("Analyze battery performance over time")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 2)
-                                    .background(Color.gray.opacity(0.2))
-                                    .cornerRadius(8)
                             }
                         }
                     }
                 }
-                
-                Section("About") {
-                    Link(destination: aboutURL) {
+
+                // MARK: - Strategy
+                Section {
+                    Picker(selection: $optimizationGoal) {
+                        ForEach(UserGoal.allCases) { goal in
+                            HStack {
+                                Image(systemName: goal.icon)
+                                Text(goal.displayName)
+                            }
+                            .tag(goal.rawValue)
+                        }
+                    } label: {
                         HStack {
-                            Text(api.isDemoMode ? "Powston Website" : "View in Powston Web")
-                            Spacer()
-                            Image(systemName: "arrow.up.right").font(.caption).foregroundColor(.secondary)
+                            Image(systemName: "target")
+                                .foregroundColor(.green)
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Optimization Goal")
+                                Text(UserGoal(from: optimizationGoal).description)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .pickerStyle(.menu)
+                } header: {
+                    Text("Strategy")
+                } footer: {
+                    Text("Your optimization goal affects how Action Items (on Decisions tab) prioritizes recommendations.")
+                }
+
+                // MARK: - Apple Intelligence
+                if #available(iOS 26.0, *) {
+                    Section {
+                        Toggle(isOn: $enableAppleIntelligence) {
+                            HStack {
+                                Image(systemName: "apple.intelligence")
+                                    .foregroundStyle(
+                                        LinearGradient(
+                                            colors: [.purple, .blue, .cyan],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
+                                    )
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Apple Intelligence")
+                                    Text("AI-powered summaries and insights")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                    } header: {
+                        Text("Apple Intelligence")
+                    } footer: {
+                        Text("Uses on-device AI to explain controller decisions, generate performance summaries, and forecast prices. All processing happens privately on your device.")
+                    }
+                }
+                
+                // MARK: - Sites & Inverters
+                if !api.effectiveSites.isEmpty {
+                    Section("Sites & Inverters") {
+                        ForEach(api.effectiveSites, id: \.id) { site in
+                            SiteRow(site: site, api: api, totalBatteryCapacity: totalBatteryCapacity)
+                                .id(site.id)
+                        }
+                        
+                        if !singleSiteMode && api.sites.count > 1 {
+                            NavigationLink(destination: AllSitesMapView(sites: api.effectiveSites)) {
+                                HStack {
+                                    Image(systemName: "map.fill")
+                                        .foregroundColor(.green)
+                                        .frame(width: 24)
+                                    Text("View All Sites on Map")
+                                    Spacer()
+                                    Text("\(api.effectiveSites.count)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 2)
+                                        .background(Color.gray.opacity(0.2))
+                                        .cornerRadius(8)
+                                }
+                            }
+                        }
+                    }
+                    
+                    // MARK: - Referral Coupons
+                    if !userCoupons.isEmpty {
+                        Section {
+                            ForEach(userCoupons) { coupon in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Text(coupon.code)
+                                            .font(.system(.body, design: .monospaced))
+                                            .fontWeight(.semibold)
+                                        Spacer()
+                                        Button {
+                                            UIPasteboard.general.string = coupon.code
+                                        } label: {
+                                            Image(systemName: "doc.on.doc")
+                                                .font(.caption)
+                                        }
+                                        .buttonStyle(.borderless)
+                                    }
+                                    Text("Share this code with a friend to give them $150 off the Powston controller!")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                .padding(.vertical, 4)
+                            }
+                        } header: {
+                            Text("Your Referral Code")
+                        } footer: {
+                            Text("Help Powston grow by sharing your referral code.")
+                        }
+                    }
+                    
+                    // MARK: - About
+                    Section("About") {
+                        Link(destination: aboutURL) {
+                            HStack {
+                                Text(api.isDemoMode ? "Powston Website" : "View in Powston Web")
+                                Spacer()
+                                Image(systemName: "arrow.up.right").font(.caption).foregroundColor(.secondary)
+                            }
+                        }
+                        
+                        Text("This app is an independent client that connects to Powston systems using their publicly available APIs. It is not affiliated with, endorsed by, or operated by Powston.")
+                                                    .font(.caption)
+                                                    .foregroundColor(.secondary)
+                                                    .onLongPressGesture {
+                                                        let generator = UIImpactFeedbackGenerator(style: .medium)
+                                                        generator.impactOccurred()
+                                                        showDevOptions.toggle()
+                                                    }
+                        
+                        Text("Powston helps manage battery and energy system behavior using configurable automation and real-time data. Outcomes depend on energy prices, equipment performance, and site conditions. Users are responsible for ensuring compliance with their energy plan and local requirements.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        // Hidden dev options - revealed by long-press on disclaimer
+                        if showDevOptions {
+                            Toggle(isOn: $useDevServer) {
+                                VStack(alignment: .leading) {
+                                    Text("Use Dev Server")
+                                    Text("dev.inverterintelligence.com")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .onChange(of: useDevServer) { _, _ in
+                                api.clearMeterRecordsCache()
+                            }
+                            .listRowBackground(Color.orange.opacity(0.1))
                         }
                     }
                 }
             }
             .navigationTitle("Settings")
-            .onAppear { notificationManager.checkAuthorization() }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    SiteIndicatorPill()
+                }
+            }
+            .onAppear {
+                notificationManager.checkAuthorization()
+                Task {
+                    userCoupons = await api.fetchUserCoupons()
+                }
+            }
             .sheet(isPresented: $showingApiSetup) { APISetupView() }
         }
     }
     
-    func formatHour(_ hour: Double) -> String {
-        guard let tz = TimeZone(identifier: "Australia/Brisbane") else {
-            return String(format: "%02d:%02d", Int(hour), Int((hour - Double(Int(hour))) * 60))
-        }
-        var cal = Calendar.current; cal.timeZone = tz
-        let startOfDay = cal.startOfDay(for: Date())
-        guard let date = cal.date(byAdding: .hour, value: Int(hour), to: startOfDay),
-              let dateWithMinutes = cal.date(byAdding: .minute, value: Int((hour - Double(Int(hour))) * 60), to: date) else {
-            return String(format: "%02d:%02d", Int(hour), Int((hour - Double(Int(hour))) * 60))
-        }
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short; formatter.dateStyle = .none; formatter.timeZone = tz
-        return formatter.string(from: dateWithMinutes)
-    }
-    
-    func formatPower(_ watts: Int) -> String {
-        if watts >= 1000 {
-            return String(format: "%.1f kW", Double(watts) / 1000)
-        }
-        return "\(watts) W"
+    func totalBatteryCapacity(for inverters: [Inverter]) -> String? {
+        let total = inverters.compactMap { $0.batteryCapacity }.reduce(0, +)
+        guard total > 0 else { return nil }
+        let kWh = Double(total) / 1000.0
+        return String(format: "%.1f kWh", kWh)
     }
 }
 
-// MARK: - Price Alert Row
-struct PriceAlertRow: View {
+// MARK: - Settings Row with Badge
+struct SettingsRowWithBadge: View {
     let icon: String
+    let iconColor: Color
     let title: String
-    let subtitle: String
-    @Binding var enabled: Bool
-    @Binding var threshold: Double
-    let currentPrice: Double?
-    let thresholdColor: Color
-    let isAbove: Bool
+    let badge: String
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Toggle(isOn: $enabled) {
+        HStack {
+            Image(systemName: icon)
+                .foregroundColor(iconColor)
+                .frame(width: 24)
+            Text(title)
+            Spacer()
+            Text(badge)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .background(Color.gray.opacity(0.2))
+                .cornerRadius(8)
+        }
+    }
+}
+
+// MARK: - Site Row
+struct SiteRow: View {
+    let site: Site
+    let api: PowstonAPI
+    let totalBatteryCapacity: ([Inverter]) -> String?
+    @State private var isExpanded = false
+    @State private var showTuningParameters = false
+    @AppStorage("use_dev_server") private var useDevServer: Bool = false
+    
+    var body: some View {
+        let siteInverters = api.inverters.filter { $0.siteId == site.id }
+        let isActiveSite = api.selectedSite?.id == site.id
+        let leadInv = api.leadInverter(forSiteId: site.id)
+        
+        DisclosureGroup(isExpanded: $isExpanded) {
+            ForEach(siteInverters) { inverter in
+                InverterRow(inverter: inverter, api: api, isLead: leadInv?.id == inverter.id)
+            }
+            
+            NavigationLink(destination: SiteDetailView(site: site)) {
                 HStack {
-                    Text(icon)
-                    VStack(alignment: .leading) {
-                        Text(title)
-                            .fontWeight(.medium)
-                        Text(subtitle)
+                    Image(systemName: "info.circle")
+                        .foregroundColor(.blue)
+                    Text("Site Details")
+                        .foregroundColor(.blue)
+                }
+            }
+            .accessibilityLabel("View details for \(site.displayName ?? site.name)")
+            
+            NavigationLink(destination: ControllerHealthView(site: site)) {
+                HStack {
+                    Image(systemName: "heart.text.square")
+                        .foregroundColor(.green)
+                    Text("Controller Health")
+                        .foregroundColor(.green)
+                }
+            }
+            .accessibilityLabel("View controller health for \(site.displayName ?? site.name)")
+            
+            // Tuning Parameters
+            NavigationLink(destination: TrainingParametersView(siteId: site.id, siteName: site.displayName ?? site.name)) {
+                HStack {
+                    Image(systemName: "slider.horizontal.3")
+                        .foregroundColor(.purple)
+                    Text("Tuning Parameters")
+                        .foregroundColor(.purple)
+                }
+            }
+            .accessibilityLabel("Edit tuning parameters for \(site.displayName ?? site.name)")
+            
+        } label: {
+            HStack(spacing: 12) {
+                Button(action: {
+                    Task { await api.switchToSite(site) }
+                }) {
+                    Circle()
+                        .fill(isActiveSite ? Color.blue : Color.gray.opacity(0.3))
+                        .frame(width: 20, height: 20)
+                        .overlay {
+                            if isActiveSite {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.white)
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isActiveSite ? "Selected site" : "Select this site")
+                .accessibilityHint(isActiveSite ? "" : "Double tap to switch to \(site.displayName ?? site.name)")
+                
+                Image(systemName: "building.2.fill")
+                    .foregroundColor(.blue)
+                    .frame(width: 24)
+                    .accessibilityHidden(true)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(site.displayName ?? site.name)
+                        .font(.headline)
+                    HStack(spacing: 4) {
+                        Text(site.state ?? "")
+                        if let network = site.network {
+                            Text("•")
+                            Text(network.capitalized)
+                        }
+                        if let capacity = totalBatteryCapacity(siteInverters) {
+                            Text("•")
+                            Text(capacity)
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(siteAccessibilityLabel(siteInverters, isActiveSite))
+        }
+    }
+            
+            func siteAccessibilityLabel(_ inverters: [Inverter], _ isActive: Bool) -> String {
+        var label = site.displayName ?? site.name
+        if isActive { label += ", currently selected" }
+        if let state = site.state { label += ", \(state)" }
+        if let network = site.network { label += ", \(network)" }
+        if let capacity = totalBatteryCapacity(inverters) { label += ", \(capacity)" }
+        label += ", \(inverters.count) inverter\(inverters.count == 1 ? "" : "s")"
+        return label
+    }
+}
+
+// MARK: - Inverter Row
+struct InverterRow: View {
+    let inverter: Inverter
+    let api: PowstonAPI
+    let isLead: Bool
+    
+    var body: some View {
+        let isSelected = api.selectedInverterId == inverter.id
+        
+        HStack {
+            Image(systemName: "star.fill")
+                .font(.caption2)
+                .foregroundColor(isLead ? .yellow : .clear)
+                .accessibilityHidden(true)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(inverter.productName)
+                    .font(.subheadline)
+                HStack(spacing: 4) {
+                    Text(inverter.manufacturer)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("•")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text(inverter.serialNumber)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    if isLead {
+                        Text("• Lead")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.yellow)
                     }
                 }
             }
             
-            if enabled {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Threshold: \(String(format: "%.1f¢", threshold))/kWh")
-                        .font(.subheadline)
-                        .foregroundColor(thresholdColor)
-                    
-                    Slider(value: $threshold, in: -10...100, step: 0.5)
-                    
-                    if let current = currentPrice {
-                        let triggered = isAbove ? current >= threshold : current <= threshold
-                        HStack {
-                            Text("Current:")
-                                .font(.caption)
-                            Spacer()
-                            Text("\(String(format: "%.1f¢", current))/kWh")
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .foregroundColor(triggered ? thresholdColor : .secondary)
-                        }
-                        .padding(.vertical, 4)
-                        .padding(.horizontal, 8)
-                        .background(Color.gray.opacity(0.1))
-                        .cornerRadius(6)
-                    }
-                }
-                .padding(.leading, 32)
+            Spacer()
+            
+            if isSelected {
+                Image(systemName: "checkmark")
+                    .foregroundColor(.green)
+                    .accessibilityHidden(true)
             }
         }
-        .padding(.vertical, 4)
-    }
-}
-
-// MARK: - API Setup View
-struct APISetupView: View {
-    @EnvironmentObject var api: PowstonAPI
-    @Environment(\.dismiss) private var dismiss
-    @AppStorage("api_key") private var apiKey = ""
-    @State private var tempApiKey = ""
-    @State private var showApiKey = false
-    @State private var connectionStatus: ConnectionStatus = .idle
-    @State private var selectedSiteId: Int? = nil
-    
-    enum ConnectionStatus: Equatable {
-        case idle
-        case connecting
-        case fetchingSites
-        case fetchingInverters
-        case success(siteCount: Int, inverterCount: Int)
-        case error(String)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            api.selectedInverterId = inverter.id
+            api.setLeadInverterOverride(siteId: inverter.siteId, inverterId: inverter.id)
+            api.clearMeterRecordsCache()
+            Task { await api.fetchData() }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(inverterAccessibilityLabel(isSelected))
+        .accessibilityHint(isSelected ? "Currently selected" : "Double tap to select this inverter as lead")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
     
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            if showApiKey {
-                                TextField("API Key", text: $tempApiKey)
-                                    .textContentType(.password)
-                                    .autocapitalization(.none)
-                                    .autocorrectionDisabled()
-                                    .font(.system(.body, design: .monospaced))
-                            } else {
-                                SecureField("API Key", text: $tempApiKey)
-                                    .autocorrectionDisabled()
-                            }
-                            
-                            Button(action: { showApiKey.toggle() }) {
-                                Image(systemName: showApiKey ? "eye.slash" : "eye")
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        
-                        if !tempApiKey.isEmpty {
-                            Text("\(tempApiKey.count) characters")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                } header: {
-                    Text("API Key")
-                } footer: {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("How to get your API key:")
-                            .fontWeight(.medium)
-                        Text("1. Visit your Powston profile page")
-                        Text("2. Select \"Generate API Key\" at the bottom")
-                        
-                        Link(destination: URL(string: "https://app.powston.com/profile")!) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.up.right.circle.fill")
-                                Text("Open Powston Profile")
-                            }
-                            .font(.subheadline)
-                        }
-                        .padding(.top, 4)
-                    }
-                    .font(.caption)
-                }
-                
-                Section {
-                    Button(action: { Task { await connect() } }) {
-                        HStack {
-                            Spacer()
-                            if case .connecting = connectionStatus {
-                                ProgressView().padding(.trailing, 8)
-                            } else if case .fetchingSites = connectionStatus {
-                                ProgressView().padding(.trailing, 8)
-                            } else if case .fetchingInverters = connectionStatus {
-                                ProgressView().padding(.trailing, 8)
-                            }
-                            Text(connectButtonText).fontWeight(.semibold)
-                            Spacer()
-                        }
-                    }
-                    .disabled(tempApiKey.isEmpty || connectionStatus == .connecting || connectionStatus == .fetchingSites || connectionStatus == .fetchingInverters)
-                    .foregroundColor(.white)
-                    .listRowBackground(tempApiKey.isEmpty ? Color.gray.opacity(0.3) : Color.blue)
-                }
-                
-                if connectionStatus != .idle {
-                    Section("Status") {
-                        switch connectionStatus {
-                        case .idle:
-                            EmptyView()
-                        case .connecting:
-                            StatusRow(icon: "network", text: "Connecting to Powston...", color: .blue, spinning: true)
-                        case .fetchingSites:
-                            StatusRow(icon: "building.2", text: "Fetching sites...", color: .blue, spinning: true)
-                        case .fetchingInverters:
-                            StatusRow(icon: "bolt", text: "Fetching inverters...", color: .blue, spinning: true)
-                        case .success(let siteCount, let inverterCount):
-                            VStack(alignment: .leading, spacing: 8) {
-                                StatusRow(icon: "checkmark.circle.fill", text: "Connected successfully", color: .green)
-                                StatusRow(icon: "building.2.fill", text: "\(siteCount) site(s) found", color: .secondary)
-                                StatusRow(icon: "bolt.fill", text: "\(inverterCount) inverter(s) found", color: .secondary)
-                            }
-                        case .error(let message):
-                            StatusRow(icon: "exclamationmark.triangle.fill", text: message, color: .red)
-                        }
-                    }
-                }
-                
-                if api.sites.count > 1 {
-                    Section("Select Site") {
-                        ForEach(api.sites) { site in
-                            Button(action: {
-                                selectedSiteId = site.id
-                                Task { await selectSite(site) }
-                            }) {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(site.displayName ?? site.name)
-                                            .fontWeight(.medium)
-                                            .foregroundColor(.primary)
-                                        Text("\(site.state) • \(site.network)")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    Spacer()
-                                    if selectedSiteId == site.id {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundColor(.green)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                if api.inverters.count > 1 {
-                    Section("Select Inverter") {
-                        ForEach(api.inverters) { inverter in
-                            Button(action: { api.selectedInverterId = inverter.id }) {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("\(inverter.manufacturer) \(inverter.productName)")
-                                            .fontWeight(.medium)
-                                            .foregroundColor(.primary)
-                                        Text("SN: \(inverter.serialNumber)")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    Spacer()
-                                    if api.selectedInverterId == inverter.id {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundColor(.green)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            .navigationTitle("API Setup")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        apiKey = tempApiKey
-                        if api.selectedInverterId != 0 {
-                            Task { await api.fetchData() }
-                        }
-                        dismiss()
-                    }
-                    .disabled(api.selectedInverterId == 0 && !api.isDemoMode)
-                    .fontWeight(.semibold)
-                }
-            }
-            .onAppear {
-                tempApiKey = apiKey
-                if !api.sites.isEmpty {
-                    connectionStatus = .success(siteCount: api.sites.count, inverterCount: api.inverters.count)
-                    if let site = api.sites.first(where: { site in
-                        api.inverters.contains(where: { $0.siteId == site.id })
-                    }) {
-                        selectedSiteId = site.id
-                    }
-                }
-            }
-        }
-    }
-    
-    var connectButtonText: String {
-        switch connectionStatus {
-        case .connecting, .fetchingSites, .fetchingInverters: return "Connecting..."
-        case .success: return "Reconnect"
-        case .error: return "Retry"
-        case .idle: return "Connect"
-        }
-    }
-    
-    func connect() async {
-        tempApiKey = tempApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        apiKey = tempApiKey
-        
-        connectionStatus = .connecting
-        connectionStatus = .fetchingSites
-        await api.fetchSites()
-        
-        if let error = api.error {
-            connectionStatus = .error(error)
-            return
-        }
-        
-        if api.sites.isEmpty {
-            connectionStatus = .error("No sites found. Check your API key permissions.")
-            return
-        }
-        
-        let targetSite = api.sites[0]
-        selectedSiteId = targetSite.id
-        
-        connectionStatus = .fetchingInverters
-        await api.fetchInverters(siteId: targetSite.id)
-        
-        if api.inverters.isEmpty {
-            connectionStatus = .error("No inverters found for site: \(targetSite.displayName ?? targetSite.name)")
-            return
-        }
-        
-        if api.inverters.count == 1 {
-            api.selectedInverterId = api.inverters[0].id
-        }
-        
-        connectionStatus = .success(siteCount: api.sites.count, inverterCount: api.inverters.count)
-        
-        if api.sites.count == 1 && api.inverters.count == 1 {
-            await api.fetchData()
-        }
-    }
-    
-    func selectSite(_ site: Site) async {
-        connectionStatus = .fetchingInverters
-        await api.fetchInverters(siteId: site.id)
-        
-        if api.inverters.isEmpty {
-            connectionStatus = .error("No inverters found for this site")
-            return
-        }
-        
-        if api.inverters.count == 1 {
-            api.selectedInverterId = api.inverters[0].id
-            await api.fetchData()
-        }
-        
-        connectionStatus = .success(siteCount: api.sites.count, inverterCount: api.inverters.count)
+    func inverterAccessibilityLabel(_ isSelected: Bool) -> String {
+        var label = "\(inverter.manufacturer) \(inverter.productName)"
+        if isLead { label += ", lead inverter" }
+        if isSelected { label += ", selected" }
+        return label
     }
 }

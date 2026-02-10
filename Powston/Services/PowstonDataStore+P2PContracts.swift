@@ -27,6 +27,7 @@ extension PowstonDataStore {
         try db.create(table: "p2p_contracts", ifNotExists: true) { t in
             t.column("id", .text).primaryKey()
             t.column("site_id", .integer).notNull()
+            t.column("direction", .text).notNull().defaults(to: "Sell")
             t.column("start_date", .datetime).notNull()
             t.column("end_date", .datetime).notNull()
             t.column("start_hour", .integer).notNull()
@@ -211,93 +212,222 @@ extension PowstonDataStore {
     }
     
     // MARK: - Performance Queries
-    
-    /// Calculate performance for a contract by joining with trade records
-    /// Buckets trade prices into contract tiers using dynamic midpoints
+
+    /// Calculate performance for a contract by joining with counterparty trades
+    /// Buckets actual trade prices into contract tiers using dynamic midpoints
+    /// Includes both CSV imports (p2p_counterparty_trades) and LocalVolts API data (lv_interval_trades)
     @MainActor
     func getP2PContractPerformance(_ contract: P2PContract) -> P2PContractPerformance {
-        // Get all trade records that overlap this contract's dates
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "MMM d"
+        print("📊 getP2PContractPerformance: \(contract.direction) \(dateFormatter.string(from: contract.startDate))–\(dateFormatter.string(from: contract.endDate)), siteId=\(contract.siteId)")
+
+        // Get all trade records that overlap this contract's dates (CSV imports)
         let tradeRecords = getP2PTradeRecords(
             siteId: contract.siteId,
             from: contract.startDate,
             to: contract.endDate
         )
-        
-        // If we have no trade records, return empty performance
-        guard !tradeRecords.isEmpty else {
+        print("   └─ Found \(tradeRecords.count) CSV trade records")
+
+        // Build a map of trade record ID to isProvisional for attribution
+        var provisionalRecordIds: Set<UUID> = []
+        for record in tradeRecords {
+            if record.isProvisional {
+                provisionalRecordIds.insert(record.id)
+            }
+        }
+
+        // Get counterparty trades for ONLY those specific trade records (CSV imports)
+        // Filter by direction to match the contract type (Buy vs Sell)
+        var counterpartyTrades: [P2PCounterpartyTrade] = []
+        for record in tradeRecords {
+            // Only include trades from records matching this contract's direction
+            guard record.direction == contract.direction else { continue }
+            let trades = getP2PCounterpartyTrades(forTradeRecord: record.id)
+            counterpartyTrades.append(contentsOf: trades)
+        }
+
+        // Also include LocalVolts API trades (lv_interval_trades) for the contract date range
+        // These are converted to P2PCounterpartyTrade format for compatibility
+        let lvTrades = getLVIntervalTrades(
+            siteId: contract.siteId,
+            from: contract.startDate,
+            to: contract.endDate
+        )
+        print("   └─ Found \(lvTrades.count) LV interval trades")
+
+        // Filter LV trades by direction and convert to P2PCounterpartyTrade
+        let directionString = contract.direction == .sell ? "Sell" : "Buy"
+        for lvTrade in lvTrades {
+            guard lvTrade.direction.rawValue == directionString else { continue }
+            let converted = P2PCounterpartyTrade(
+                id: lvTrade.id,
+                tradeRecordId: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!,  // Sentinel for LV trades
+                siteId: lvTrade.siteId,
+                counterpartyName: lvTrade.counterpartyName,
+                volumeKwh: lvTrade.volumeKwh,
+                priceCents: lvTrade.priceCents,
+                tradeDate: lvTrade.periodStart,
+                importedAt: lvTrade.fetchedAt,
+                direction: contract.direction,
+                facility: lvTrade.cpFacility
+            )
+            counterpartyTrades.append(converted)
+        }
+
+        print("   └─ After direction filtering: \(counterpartyTrades.count) counterparty trades")
+
+        // If we have no trades, return empty performance
+        guard !counterpartyTrades.isEmpty else {
             let emptyTierPerf = contract.tiers.map { tier in
-                P2PTierPerformance(tier: tier, matchedKwh: 0, matchedRevenue: 0, tradeCount: 0)
+                P2PTierPerformance(
+                    tier: tier,
+                    matchedKwh: 0,
+                    matchedRevenue: 0,
+                    tradeCount: 0,
+                    actualKwh: 0,
+                    actualRevenue: 0,
+                    provisionalKwh: 0,
+                    provisionalRevenue: 0
+                )
             }
             return P2PContractPerformance(
                 contract: contract,
-                tradeRecords: [],
+                tradeRecords: tradeRecords,
                 tierPerformance: emptyTierPerf,
                 totalMatchedKwh: 0,
                 totalRevenue: 0,
-                counterpartyCount: 0
+                counterpartyCount: 0,
+                counterpartyBreakdown: [],
+                actualKwh: 0,
+                actualRevenue: 0,
+                provisionalKwh: 0,
+                provisionalRevenue: 0
             )
         }
-        
-        // Aggregate totals from trade records
-        let totalMatchedKwh = tradeRecords.reduce(0) { $0 + $1.p2pKwh }
-        let totalRevenue = tradeRecords.reduce(0) { $0 + $1.p2pRevenue }
-        let totalCounterparties = tradeRecords.reduce(0) { $0 + $1.counterpartyCount }
-        
-        // For tier-level breakdown, we need the per-price-point data
-        // that was stored in the trade records. Since P2PTradeRecord stores
-        // aggregate data, we approximate tier distribution using the
-        // average price vs tier boundaries.
-        let tierPerformance = approximateTierPerformance(
+
+        // Calculate tier performance using actual trade prices
+        let tierPerformance = calculateTierPerformance(
             contract: contract,
-            tradeRecords: tradeRecords
+            trades: counterpartyTrades,
+            provisionalRecordIds: provisionalRecordIds
         )
-        
+
+        // Calculate totals from actual trades, split by provisional
+        var actualKwh = 0.0
+        var actualRevenue = 0.0
+        var provisionalKwh = 0.0
+        var provisionalRevenue = 0.0
+
+        for trade in counterpartyTrades {
+            if provisionalRecordIds.contains(trade.tradeRecordId) {
+                provisionalKwh += trade.volumeKwh
+                provisionalRevenue += trade.revenue
+            } else {
+                actualKwh += trade.volumeKwh
+                actualRevenue += trade.revenue
+            }
+        }
+
+        let totalMatchedKwh = actualKwh + provisionalKwh
+        let totalRevenue = actualRevenue + provisionalRevenue
+        let uniqueCounterparties = Set(counterpartyTrades.map { $0.counterpartyName }).count
+
+        // Calculate counterparty breakdown
+        var counterpartyAggregates: [String: (kwh: Double, revenue: Double, count: Int)] = [:]
+        for trade in counterpartyTrades {
+            let existing = counterpartyAggregates[trade.counterpartyName] ?? (0, 0, 0)
+            counterpartyAggregates[trade.counterpartyName] = (
+                existing.kwh + trade.volumeKwh,
+                existing.revenue + trade.revenue,
+                existing.count + 1
+            )
+        }
+        let counterpartyBreakdown = counterpartyAggregates.map { name, data in
+            CounterpartyBreakdownItem(
+                counterpartyName: name,
+                matchedKwh: data.kwh,
+                revenue: data.revenue,
+                tradeCount: data.count
+            )
+        }.sorted { $0.matchedKwh > $1.matchedKwh }
+
         return P2PContractPerformance(
             contract: contract,
             tradeRecords: tradeRecords,
             tierPerformance: tierPerformance,
             totalMatchedKwh: totalMatchedKwh,
             totalRevenue: totalRevenue,
-            counterpartyCount: totalCounterparties
+            counterpartyCount: uniqueCounterparties,
+            counterpartyBreakdown: counterpartyBreakdown,
+            actualKwh: actualKwh,
+            actualRevenue: actualRevenue,
+            provisionalKwh: provisionalKwh,
+            provisionalRevenue: provisionalRevenue
         )
     }
-    
-    /// Approximate tier performance from aggregate trade records
-    /// Since P2PTradeRecord has avgPrice but not per-tier breakdown,
-    /// we distribute proportionally based on tier volumes and actual totals
-    private func approximateTierPerformance(
+
+    /// Calculate tier performance by bucketing actual trades based on their prices
+    /// Uses contract's tier boundaries (midpoints between prices) for bucketing
+    private func calculateTierPerformance(
         contract: P2PContract,
-        tradeRecords: [P2PTradeRecord]
+        trades: [P2PCounterpartyTrade],
+        provisionalRecordIds: Set<UUID>
     ) -> [P2PTierPerformance] {
-        let totalMatched = tradeRecords.reduce(0) { $0 + $1.p2pKwh }
-        let totalRevenue = tradeRecords.reduce(0) { $0 + $1.p2pRevenue }
-        
-        guard totalMatched > 0, !contract.tiers.isEmpty else {
-            return contract.tiers.map { tier in
-                P2PTierPerformance(tier: tier, matchedKwh: 0, matchedRevenue: 0, tradeCount: 0)
+        guard !contract.tiers.isEmpty else { return [] }
+
+        // Initialize accumulators for each tier (total and split by provisional)
+        struct TierAccumulator {
+            var kwh: Double = 0
+            var revenue: Double = 0
+            var count: Int = 0
+            var actualKwh: Double = 0
+            var actualRevenue: Double = 0
+            var provisionalKwh: Double = 0
+            var provisionalRevenue: Double = 0
+        }
+        var tierData: [UUID: TierAccumulator] = [:]
+        for tier in contract.tiers {
+            tierData[tier.id] = TierAccumulator()
+        }
+
+        // Bucket each trade into the appropriate tier based on its price
+        for trade in trades {
+            guard trade.volumeKwh > 0 else { continue }
+
+            if let matchedTier = contract.matchingTier(forPriceCents: trade.priceCents) {
+                var data = tierData[matchedTier.id] ?? TierAccumulator()
+                data.kwh += trade.volumeKwh
+                data.revenue += trade.revenue  // Use actual revenue, not tier price
+                data.count += 1
+
+                // Split by provisional status
+                if provisionalRecordIds.contains(trade.tradeRecordId) {
+                    data.provisionalKwh += trade.volumeKwh
+                    data.provisionalRevenue += trade.revenue
+                } else {
+                    data.actualKwh += trade.volumeKwh
+                    data.actualRevenue += trade.revenue
+                }
+                tierData[matchedTier.id] = data
             }
         }
-        
-        // Distribute matched kWh across tiers proportionally to tier volume
-        // Lower-price tiers fill first (they're most attractive to buyers)
-        let sortedTiers = contract.tiers.sorted { $0.priceCents < $1.priceCents }
-        var remaining = totalMatched
-        var performances: [P2PTierPerformance] = []
-        
-        for tier in sortedTiers {
-            let tierMatched = min(remaining, tier.volumeKwh)
-            let tierRevenue = tierMatched * tier.priceCents / 100.0
-            remaining -= tierMatched
-            
-            performances.append(P2PTierPerformance(
+
+        // Build tier performance array
+        return contract.tiers.map { tier in
+            let data = tierData[tier.id] ?? TierAccumulator()
+            return P2PTierPerformance(
                 tier: tier,
-                matchedKwh: tierMatched,
-                matchedRevenue: tierRevenue,
-                tradeCount: tierMatched > 0 ? 1 : 0  // Approximation
-            ))
+                matchedKwh: data.kwh,
+                matchedRevenue: data.revenue,
+                tradeCount: data.count,
+                actualKwh: data.actualKwh,
+                actualRevenue: data.actualRevenue,
+                provisionalKwh: data.provisionalKwh,
+                provisionalRevenue: data.provisionalRevenue
+            )
         }
-        
-        return performances
     }
     
     // MARK: - iCloud KVS Sync
@@ -377,8 +507,10 @@ extension PowstonDataStore {
                 for key in contractKeysChanged {
                     if let siteIdStr = key.components(separatedBy: "_site").last,
                        let siteId = Int(siteIdStr) {
-                        Task { @MainActor in
-                            self?.syncP2PContractsFromCloud(siteId: siteId)
+                        Task {
+                            await MainActor.run { [weak self] in
+                                self?.syncP2PContractsFromCloud(siteId: siteId)
+                            }
                         }
                     }
                 }

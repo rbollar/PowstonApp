@@ -97,7 +97,16 @@ struct PriceAlertBanner: View {
     @State private var lastSpikeSignature: String? = nil
     
     var activeAlerts: [PriceAlertType] {
+        #if DEBUG
+        print("🔍 Banner: priceAlertsEnabled=\(priceAlertsEnabled), hasData=\(api.data != nil)")
+        #endif
+        
         guard priceAlertsEnabled, let data = api.data else { return [] }
+        
+        #if DEBUG
+        print("🔍 Banner: sell=\(data.sellPrice ?? -1), buy=\(data.buyPrice ?? -1)")
+        print("🔍 Banner: sellAbove=\(sellAboveEnabled)/\(sellAboveThreshold), spikeEnabled=\(spikeAlertsEnabled)/\(spikeThreshold)")
+        #endif
         
         var alerts: [PriceAlertType] = []
         
@@ -121,7 +130,7 @@ struct PriceAlertBanner: View {
         }
         
         // Check spike forecasts
-        if spikeAlertsEnabled, let forecasts = data.forecasts {
+        if spikeAlertsEnabled, let forecasts = data.sellForecast {
             let spikeInfo = findSpike(forecasts: forecasts, threshold: spikeThreshold, startTime: data.forecastStartDate)
             
             if let spike = spikeInfo {
@@ -214,17 +223,19 @@ struct PriceAlertBanner: View {
     }
     
     private func findSpike(forecasts: [Double], threshold: Double, startTime: Date?) -> SpikeInfo? {
-        // Find forecasts above threshold (forecasts are in ¢/kWh)
+        // Convert threshold from ¢/kWh to $/MWh for comparison
+        let thresholdMWh = threshold * 10
+        
+        // Find forecasts above threshold (forecasts are in $/MWh)
         var spikePeriods: [(index: Int, value: Double)] = []
         
         for (i, forecast) in forecasts.enumerated() {
-            if forecast >= threshold {
+            if forecast >= thresholdMWh {
                 spikePeriods.append((i, forecast))
             }
         }
         
         guard !spikePeriods.isEmpty else { return nil }
-        
         // Calculate time of first spike
         let baseTime = startTime ?? Date()
         
@@ -277,7 +288,7 @@ struct PriceAlertBanner: View {
         }
         
         // Convert ¢/kWh to $/MWh for display
-        let peakRRP = peakValue * 10
+        let peakRRP = peakValue
         
         return SpikeInfo(timeString: timeString, peakRRP: peakRRP)
     }

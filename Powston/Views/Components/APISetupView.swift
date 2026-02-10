@@ -209,6 +209,10 @@ struct APISetupView: View {
                                     Task { await connect() }
                                 }
                             }
+                            // Sync demo mode to Watch
+                            #if os(iOS)
+                            WatchConnectivityManager.shared.sendDemoModeToWatch(enabled: newValue, from: api)
+                            #endif
                         }
                     if api.demoModeEnabled {
                         HStack {
@@ -354,31 +358,6 @@ struct APISetupView: View {
         }
         
         connectionStatus = .success(siteCount: api.sites.count, inverterCount: api.inverters.count)
-    }
-}
-
-// MARK: - Status Row
-struct StatusRow: View {
-    let icon: String
-    let text: String
-    let color: Color
-    var spinning: Bool = false
-    
-    var body: some View {
-        HStack {
-            if spinning {
-                ProgressView()
-                    .scaleEffect(0.8)
-                    .frame(width: 20, height: 20)
-            } else {
-                Image(systemName: icon)
-                    .foregroundColor(color)
-                    .frame(width: 20)
-            }
-            Text(text)
-                .font(.subheadline)
-                .foregroundColor(color == .secondary ? .primary : color)
-        }
     }
 }
 

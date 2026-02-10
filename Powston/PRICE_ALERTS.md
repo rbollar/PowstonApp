@@ -1,7 +1,7 @@
 # Local Price Alerts Implementation
 
 ## Overview
-The Powston app now supports **local price alerts** that notify users when the sell price reaches their desired threshold. These notifications are completely **FREE** and require no server infrastructure.
+The Powston app now supports **local price alerts** that notify users when buy or sell prices reach their desired thresholds. These notifications are completely **FREE** and require no server infrastructure.
 
 ## Features
 
@@ -12,21 +12,26 @@ The Powston app now supports **local price alerts** that notify users when the s
    - Check authorization status
    - Show clear UI when permissions needed
 
-2. **Configurable Price Threshold**
-   - Set custom sell price threshold (0-100¢)
-   - Slider with 0.5¢ increments
-   - Quick preset buttons: 30¢, 40¢, 50¢, 60¢
-   - Shows current sell price for reference
+2. **Configurable Price Thresholds**
+   - **Sell Price Alerts**: Alert when price goes above OR below threshold
+   - **Buy Price Alerts**: Alert when price goes above OR below threshold
+   - Set custom thresholds (0-100¢) with 0.5¢ increments
+   - Quick preset buttons for common values
+   - Shows current prices for reference
+   - Independent enable/disable for each alert type
 
 3. **Smart Alert Delivery**
-   - Only sends when sell price ≥ threshold
-   - 30-minute cooldown between alerts (no spam!)
+   - Separate alerts for buy and sell prices
+   - Configurable above/below conditions
+   - 30-minute cooldown between alerts of the same type (no spam!)
    - Works automatically with 5-minute refresh
    - Badge notification on app icon
 
 4. **User Interface**
-   - New "Price Alerts" section in Settings
-   - Enable/disable toggle
+   - "Price Alerts" section in Settings
+   - Master enable/disable toggle for all alerts
+   - Sell Price section with above/below picker
+   - Buy Price section with independent enable toggle and above/below picker
    - Visual feedback for current price vs threshold
    - Permission request button if not authorized
 
@@ -37,43 +42,59 @@ The Powston app now supports **local price alerts** that notify users when the s
 ┌─────────────────────────────────────────────────────┐
 │ 1. User enables Price Alerts in Settings           │
 │    - Grants notification permission                │
-│    - Sets threshold (e.g., 40¢/kWh)                │
+│    - Sell: Alert when above 40¢/kWh                │
+│    - Buy: Alert when below 15¢/kWh                 │
 └─────────────────────────────────────────────────────┘
                       ↓
 ┌─────────────────────────────────────────────────────┐
 │ 2. App refreshes data every 5 minutes              │
 │    - Fetches latest inverter data                  │
-│    - Gets current sell price                       │
+│    - Gets current buy and sell prices              │
 └─────────────────────────────────────────────────────┘
                       ↓
 ┌─────────────────────────────────────────────────────┐
-│ 3. Check if sell price ≥ threshold                 │
-│    - Yes: Send notification (if not sent recently) │
-│    - No: Do nothing                                 │
+│ 3. Check conditions                                 │
+│    - Sell price ≥ threshold (if above selected)    │
+│    - Sell price ≤ threshold (if below selected)    │
+│    - Buy price ≤ threshold (if below selected)     │
+│    - Buy price ≥ threshold (if above selected)     │
 └─────────────────────────────────────────────────────┘
                       ↓
 ┌─────────────────────────────────────────────────────┐
-│ 4. User receives notification                       │
+│ 4. User receives notifications                      │
 │    🚀 High Sell Price Alert!                       │
 │    Sell price is 42.5¢/kWh (threshold: 40¢)       │
+│                                                     │
+│    💰 Low Buy Price Alert!                         │
+│    Buy price is 12.3¢/kWh (threshold: 15¢)        │
 └─────────────────────────────────────────────────────┘
 ```
 
 ### Code Structure
 
 ```swift
-// 1. NotificationManager - Handles all notification logic
-NotificationManager.shared.requestPermission()
-NotificationManager.shared.sendPriceAlert(sellPrice: 42.5, threshold: 40.0)
-
-// 2. PowstonAPI - Checks prices after each fetch
-func checkPriceAlert(_ sellPrice: Double) {
-    // Checks settings and sends notification if needed
+// 1. PriceAlertType - Defines alert conditions
+enum PriceAlertType: String, Codable {
+    case above
+    case below
 }
 
-// 3. Settings UI - User configuration
+// 2. NotificationManager - Handles all notification logic
+NotificationManager.shared.sendPriceAlert(sellPrice: 42.5, threshold: 40.0)
+NotificationManager.shared.sendBuyPriceAlert(buyPrice: 12.3, threshold: 15.0)
+
+// 3. PowstonAPI - Checks prices after each fetch
+func checkPriceAlert(_ sellPrice: Double, _ buyPrice: Double) {
+    // Checks settings and sends notifications if needed
+}
+
+// 4. Settings UI - User configuration
 @AppStorage("price_alerts_enabled") var priceAlertsEnabled: Bool
 @AppStorage("sell_price_alert_threshold") var sellPriceThreshold: Double
+@AppStorage("sell_price_alert_type") var sellPriceAlertType: PriceAlertType
+@AppStorage("buy_price_alerts_enabled") var buyPriceAlertsEnabled: Bool
+@AppStorage("buy_price_alert_threshold") var buyPriceThreshold: Double
+@AppStorage("buy_price_alert_type") var buyPriceAlertType: PriceAlertType
 ```
 
 ## Settings UI
@@ -99,15 +120,30 @@ func checkPriceAlert(_ sellPrice: Double) {
 ├─────────────────────────────────────────┤
 │ Enable Price Alerts        ✓ ON         │
 │                                         │
-│ Alert when sell price reaches: 40.0¢   │
+│ ━━━ Sell Price Alerts ━━━               │
+│ [Above] [Below]  ← Selected: Above      │
+│                                         │
+│ Alert when above: 40.0¢/kWh             │
 │ [0¢ ────●────────────── 100¢]          │
 │                                         │
 │ Common thresholds:                      │
-│ [30¢] [40¢] [50¢] [60¢]                │
-│                                         │
-│ ℹ️ Alerts won't repeat within 30 min   │
+│ [20¢] [30¢] [40¢] [50¢]                │
 │                                         │
 │ Current sell price:    12.5¢/kWh       │
+│                                         │
+│ ━━━ Buy Price Alerts ━━━                │
+│ Enable Buy Price Alerts    ✓ ON         │
+│ [Above] [Below]  ← Selected: Below      │
+│                                         │
+│ Alert when below: 15.0¢/kWh             │
+│ [0¢ ────●────────────── 100¢]          │
+│                                         │
+│ Common thresholds:                      │
+│ [10¢] [15¢] [20¢] [25¢]                │
+│                                         │
+│ Current buy price:     18.2¢/kWh       │
+│                                         │
+│ ℹ️ Alerts won't repeat within 30 min   │
 └─────────────────────────────────────────┘
 ```
 
@@ -115,72 +151,127 @@ func checkPriceAlert(_ sellPrice: Double) {
 
 ### Example Scenario:
 
-**9:00 AM** - User sets threshold to 40¢
+**9:00 AM** - User configures alerts
 ```
-Settings → Price Alerts → Enable → Set 40¢
+Settings → Price Alerts → Enable
+Sell: Alert when ABOVE 40¢
+Buy: Alert when BELOW 15¢
 ```
 
-**2:15 PM** - Price hits 42¢
+**2:15 PM** - Sell price hits 42¢
 ```
 🚀 High Sell Price Alert!
 Sell price is 42.5¢/kWh (threshold: 40.0¢)
 ```
 
-**2:30 PM** - Price still at 45¢
+**2:30 PM** - Sell price still at 45¢
 ```
 (No notification - waiting 30 min cooldown)
 ```
 
-**3:00 PM** - Price drops to 38¢
+**3:00 PM** - Buy price drops to 12¢
 ```
-(No notification - below threshold)
+💰 Low Buy Price Alert!
+Buy price is 12.3¢/kWh (threshold: 15.0¢)
+(Different alert type, so sent immediately)
 ```
 
-**4:30 PM** - Price rises to 48¢
+**4:30 PM** - Sell price rises to 48¢
 ```
 🚀 High Sell Price Alert!
 Sell price is 48.0¢/kWh (threshold: 40.0¢)
-(30+ minutes since last alert, so sent again)
+(30+ minutes since last sell alert, so sent again)
 ```
 
 ## Technical Details
 
+### Alert Types
+
+#### Sell Price Alerts
+- **Above**: Alert when sell price goes above threshold
+  - Use case: Know when it's profitable to export to grid
+  - Icon: 🚀 High Sell Price Alert!
+  - Color: Green
+  
+- **Below**: Alert when sell price drops below threshold
+  - Use case: Know when export becomes less profitable
+  - Icon: ⚠️ Low Sell Price Alert
+  - Color: Orange
+
+#### Buy Price Alerts
+- **Above**: Alert when buy price goes above threshold
+  - Use case: Know when importing from grid is expensive
+  - Icon: ⚠️ High Buy Price Alert
+  - Color: Red
+  
+- **Below**: Alert when buy price drops below threshold
+  - Use case: Know when it's cheap to charge battery from grid
+  - Icon: 💰 Low Buy Price Alert!
+  - Color: Blue
+
 ### Cooldown Logic
 ```swift
-let lastAlert = UserDefaults.standard.double(forKey: "last_price_alert_time")
+// Separate cooldowns for buy and sell alerts
+let lastSellAlert = UserDefaults.standard.double(forKey: "last_sell_price_alert_time")
+let lastBuyAlert = UserDefaults.standard.double(forKey: "last_buy_price_alert_time")
 let now = Date().timeIntervalSince1970
 
-// Wait at least 30 minutes (1800 seconds) between alerts
+// Wait at least 30 minutes (1800 seconds) between alerts of same type
 guard now - lastAlert > 1800 else { return }
 ```
 
 ### Notification Content
 ```swift
+// Sell price above threshold
 content.title = "🚀 High Sell Price Alert!"
 content.body = "Sell price is 42.5¢/kWh (threshold: 40.0¢)"
-content.sound = .default
-content.badge = 1  // Shows badge on app icon
+
+// Sell price below threshold
+content.title = "⚠️ Low Sell Price Alert"
+content.body = "Sell price is 18.5¢/kWh (threshold: 20.0¢)"
+
+// Buy price below threshold
+content.title = "💰 Low Buy Price Alert!"
+content.body = "Buy price is 12.3¢/kWh (threshold: 15.0¢)"
+
+// Buy price above threshold
+content.title = "⚠️ High Buy Price Alert"
+content.body = "Buy price is 45.0¢/kWh (threshold: 40.0¢)"
 ```
 
 ### Storage Keys
 ```swift
 "price_alerts_enabled"           → Bool (default: false)
 "sell_price_alert_threshold"     → Double (default: 40.0)
-"last_price_alert_time"          → Double (timestamp)
+"sell_price_alert_type"          → String (default: "above")
+"buy_price_alerts_enabled"       → Bool (default: false)
+"buy_price_alert_threshold"      → Double (default: 15.0)
+"buy_price_alert_type"           → String (default: "below")
+"last_sell_price_alert_time"     → Double (timestamp)
+"last_buy_price_alert_time"      → Double (timestamp)
 ```
 
-## Limitations
+## Use Cases
 
-### ⚠️ What Doesn't Work:
-1. **App Must Be Active**: Won't notify if app is fully terminated
-2. **5-Minute Delay**: Only checks every 5 minutes with auto-refresh
-3. **Requires Backgrounding**: iOS may suspend background refresh
+### High Sell Price Alert (Above)
+**When:** Sell price goes above 40¢
+**Action:** Export excess solar to grid for maximum profit
+**Notification:** 🚀 High Sell Price Alert!
 
-### ✅ What Does Work:
-1. **App Active**: Notifications work perfectly
-2. **App Backgrounded**: iOS usually allows background refresh for ~30 min
-3. **No Cost**: Completely free, no server needed
-4. **Battery Friendly**: Piggybacks on existing 5-min refresh
+### Low Sell Price Alert (Below)
+**When:** Sell price drops below 20¢
+**Action:** Stop exporting, keep energy for later
+**Notification:** ⚠️ Low Sell Price Alert
+
+### Low Buy Price Alert (Below)
+**When:** Buy price drops below 15¢
+**Action:** Good time to charge battery from grid
+**Notification:** 💰 Low Buy Price Alert!
+
+### High Buy Price Alert (Above)
+**When:** Buy price goes above 40¢
+**Action:** Avoid importing, use battery instead
+**Notification:** ⚠️ High Buy Price Alert
 
 ## Testing
 
@@ -191,9 +282,10 @@ content.badge = 1  // Shows badge on app icon
    Settings → Price Alerts → Enable Notifications → Enable Price Alerts
    ```
 
-2. **Set Low Threshold:**
+2. **Set Test Thresholds:**
    ```
-   Set threshold to 0¢ (or below current price)
+   Sell: Above, threshold below current price
+   Buy: Below, threshold above current price
    ```
 
 3. **Trigger Refresh:**
@@ -201,21 +293,21 @@ content.badge = 1  // Shows badge on app icon
    Dashboard → Tap refresh button
    ```
 
-4. **Check Notification:**
+4. **Check Notifications:**
    ```
-   Should receive notification immediately
+   Should receive notifications immediately
    ```
 
 5. **Test Cooldown:**
    ```
-   Refresh again within 30 minutes → No notification
-   Wait 30+ minutes → Refresh → Notification appears
+   Refresh again within 30 minutes → No notifications
+   Wait 30+ minutes → Refresh → Notifications appear
    ```
 
 ### Debug Mode:
 To test without waiting 30 minutes, temporarily change cooldown:
 ```swift
-// In NotificationManager.sendPriceAlert()
+// In NotificationManager methods
 // Change this line:
 guard now - lastAlert > 1800 else { return }  // 30 minutes
 
@@ -245,85 +337,26 @@ Settings → Notifications → Powston
 
 ### Data Stored Locally:
 - Alert preferences (enabled/disabled)
-- Threshold value (¢/kWh)
-- Last alert timestamp
+- Threshold values (¢/kWh)
+- Alert types (above/below)
+- Last alert timestamps
 - **No data sent to server**
-
-## Future Enhancements (Optional)
-
-### Possible Additions:
-
-1. **Multiple Thresholds**
-   - Different alerts for different price ranges
-   - "Very High" vs "High" alerts
-
-2. **Buy Price Alerts**
-   - Alert when buy price is low
-   - Good time to charge battery
-
-3. **Quiet Hours**
-   - Don't send alerts during sleep hours
-   - User-configurable time range
-
-4. **Alert Sounds**
-   - Custom notification sounds
-   - Different sounds for different thresholds
-
-5. **Notification History**
-   - Log of past alerts
-   - View alert history in app
-
-6. **Smart Cooldown**
-   - Longer cooldown if price stays high
-   - Shorter if price fluctuates
-
-### Example: Quiet Hours
-```swift
-@AppStorage("quiet_hours_enabled") var quietHoursEnabled: Bool
-@AppStorage("quiet_start_hour") var quietStart: Double = 22.0  // 10 PM
-@AppStorage("quiet_end_hour") var quietEnd: Double = 7.0       // 7 AM
-
-func isQuietHours() -> Bool {
-    let hour = Calendar.current.component(.hour, from: Date())
-    if quietStart < quietEnd {
-        return hour >= Int(quietStart) && hour < Int(quietEnd)
-    } else {
-        return hour >= Int(quietStart) || hour < Int(quietEnd)
-    }
-}
-```
-
-## Cost Analysis
-
-### Complete Cost Breakdown:
-
-| Component | Cost |
-|-----------|------|
-| iOS UserNotifications API | **FREE** |
-| Local notification delivery | **FREE** |
-| No server required | **FREE** |
-| No third-party services | **FREE** |
-| No ongoing fees | **FREE** |
-| **TOTAL** | **$0.00** |
-
-### Comparison to Remote Push:
-- Local: **$0/month**
-- Remote with server: **$5-10/month**
-- **Savings: 100%** ✅
 
 ## Summary
 
-✅ **Implemented:** Local price alerts with threshold configuration  
+✅ **Implemented:** Both buy and sell price alerts with above/below thresholds  
 ✅ **Cost:** Completely free  
 ✅ **Setup Time:** Already done!  
-✅ **User Control:** Full control over threshold and enable/disable  
-✅ **Smart Delivery:** 30-minute cooldown prevents spam  
+✅ **User Control:** Full control over thresholds, types, and enable/disable  
+✅ **Smart Delivery:** 30-minute cooldown per alert type prevents spam  
 ✅ **Works With:** Existing 5-minute auto-refresh  
 ✅ **Privacy:** All data stored locally, no server needed  
+✅ **Flexible:** 4 different alert scenarios supported  
 
-The feature is ready to use! Users just need to:
+The feature is ready to use! Users can:
 1. Go to Settings
 2. Enable notifications when prompted
 3. Turn on Price Alerts
-4. Set their desired threshold
-5. Enjoy automatic alerts when prices are high! 🚀
+4. Configure sell price alerts (above/below threshold)
+5. Optionally enable buy price alerts (above/below threshold)
+6. Enjoy automatic alerts when conditions are met! 🚀💰

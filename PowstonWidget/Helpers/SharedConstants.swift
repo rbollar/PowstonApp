@@ -8,7 +8,7 @@
 import Foundation
 
 // App Group identifier - must be enabled in both iOS and Watch targets
-let appGroupID = "group.com.powston.app"
+let appGroupID = "group.com.bollar.powston"
 
 // Shared UserDefaults for App Group
 let sharedDefaults = UserDefaults(suiteName: appGroupID)
@@ -18,4 +18,5 @@ enum SharedSettingsKey {
     static let apiKey = "api_key"
     static let baseURL = "base_url"
     static let selectedInverterId = "selected_inverter_id"
+    static let siteId = "site_id"
 }

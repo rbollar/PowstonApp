@@ -8,6 +8,15 @@
 import Foundation
 import SwiftUI
 
+// MARK: - Powston Service Health Response
+
+struct PowstonHealthResponse: Codable {
+    let status: String
+    let message: String
+    let time: String
+    let version: String
+}
+
 // MARK: - Controller Health Status
 
 enum ControllerHealthStatus: Equatable {
@@ -64,6 +73,7 @@ extension PowstonAPI {
             print("❌ Site monitors error: \(error)")
             return []
         }
+        
     }
     
     // MARK: - Fetch Controller Health
@@ -127,4 +137,50 @@ extension PowstonAPI {
             return []
         }
     }
+    // MARK: - Check Powston Service Health
+        
+        func checkPowstonServiceHealth() async {
+            let urlString = "\(baseURL)/api/health_checker"
+            guard let url = URL(string: urlString) else {
+                await MainActor.run {
+                    powstonServiceOnline = false
+                    powstonServiceLastCheck = Date()
+                }
+                return
+            }
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue("application/json", forHTTPHeaderField: "accept")
+            request.timeoutInterval = 10
+            
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                
+                guard let httpResponse = response as? HTTPURLResponse,
+                      httpResponse.statusCode == 200 else {
+                    print("❌ Powston health check failed: HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+                    await MainActor.run {
+                        powstonServiceOnline = false
+                        powstonServiceLastCheck = Date()
+                    }
+                    return
+                }
+                
+                let health = try JSONDecoder().decode(PowstonHealthResponse.self, from: data)
+                let isOnline = (health.status == "success")
+                print("✅ Powston service health: \(isOnline ? "online" : "offline")")
+                
+                await MainActor.run {
+                    powstonServiceOnline = isOnline
+                    powstonServiceLastCheck = Date()
+                }
+            } catch {
+                print("❌ Powston health check error: \(error.localizedDescription)")
+                await MainActor.run {
+                    powstonServiceOnline = false
+                    powstonServiceLastCheck = Date()
+                }
+            }
+        }
 }

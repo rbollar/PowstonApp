@@ -2,250 +2,304 @@
 //  EMSDashboard.swift
 //  Powston
 //
-//  Card-based EMS dashboard style
+//  Card-based EMS dashboard style - matching Powston web design
 //
 
 import SwiftUI
 
 struct EMSDashboard: View {
     let data: InverterResponse
-    let sites: [Site]
     @EnvironmentObject var api: PowstonAPI
-    @State private var analyticsTab: AnalyticsTab = .powerFlow
-    
-    enum AnalyticsTab: String, CaseIterable {
-        case powerFlow = "Power Flow"
-        case costs = "Costs"
-        case battery = "Battery"
-    }
     
     var body: some View {
         VStack(spacing: 16) {
-            // Card 1: Overview
-            overviewCard
+            // Card 1: Power Flows
+            powerFlowsCard
             
-            // Card 2: System Control
-            systemControlCard
+            // Card 2: Battery Status
+            batteryStatusCard
             
             // Card 3: Financials
             financialsCard
-            
-            // Card 4: Battery Status
-            batteryStatusCard
         }
         .padding(.horizontal)
     }
     
-    // MARK: - Overview Card
+    // MARK: - Power Flows Card
     @ViewBuilder
-    var overviewCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    var powerFlowsCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
             // Header
             HStack {
-                Text("Overview")
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                Spacer()
-                // Mode badge
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.caption2)
-                    Text(displayAction(data.currentAction).uppercased())
-                        .font(.caption)
-                        .fontWeight(.medium)
+                HStack(spacing: 6) {
+                    Text("Power Flows")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                    if let intervalTime = data.intervalTime {
+                        Text("• \(formatIntervalTime(intervalTime))")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Color.gray.opacity(0.1))
-                .cornerRadius(8)
+                Spacer()
+                // Mode badge - tappable to go to controls
+                NavigationLink(destination: ManualOverrideView()) {
+                    HStack(spacing: 6) {
+                        if api.hasPendingOverride {
+                            ProgressView()
+                                .controlSize(.mini)
+                            Text("PENDING")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                        } else if api.hasActiveOverride, let firstActive = api.currentOverrides.first {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                            Text("MANUAL: \(firstActive.action.uppercased())")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                        } else if api.hasScheduledOverride, let firstScheduled = api.scheduledOverrides.first {
+                            Image(systemName: "clock.fill")
+                                .font(.caption)
+                            Text("SCHED: \(firstScheduled.action.uppercased()) \(firstScheduled.formattedStartsIn)")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                        } else {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.caption)
+                            Text(displayAction(data.currentAction).uppercased() + " MODE")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                        }
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundColor(api.hasActiveOverride ? .orange : ((api.hasPendingOverride || api.hasScheduledOverride) ? .blue : .secondary))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(api.hasActiveOverride ? Color.orange.opacity(0.15) : ((api.hasPendingOverride || api.hasScheduledOverride) ? Color.blue.opacity(0.15) : Color(.systemGray6)))
+                    .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(modeBadgeAccessibilityLabel)
+                .accessibilityHint("Double tap to open manual controls")
             }
             
             // 2x2 Grid of stats
             LazyVGrid(columns: [
                 GridItem(.flexible()),
                 GridItem(.flexible())
-            ], spacing: 16) {
-                EMSStatCell(
+            ], spacing: 20) {
+                PowerFlowCell(
                     icon: "sun.max.fill",
+                    iconBackground: .yellow.opacity(0.15),
                     iconColor: .yellow,
-                    value: String(format: "%.1f", data.solarKw),
-                    label: "Solar (kW)"
+                    value: data.solarKw,
+                    label: "Solar (kW)",
+                    onTap: { TabSelection.shared.selectedTab = .decisions }
                 )
-                EMSStatCell(
+                .accessibilityLabel("Solar power: \(String(format: "%.1f", data.solarKw)) kilowatts")
+                
+                PowerFlowCell(
                     icon: "house.fill",
-                    iconColor: .blue,
-                    value: String(format: "%.1f", data.houseKw),
-                    label: "Home (kW)"
+                    iconBackground: .purple.opacity(0.15),
+                    iconColor: .purple,
+                    value: data.displayHouseKw,
+                    label: "Home (kW)",
+                    showBadge: data.hasSignificantImbalance,
+                    onTap: { TabSelection.shared.selectedTab = .decisions }
                 )
-                EMSStatCell(
+                .accessibilityLabel("Home consumption: \(String(format: "%.1f", data.displayHouseKw)) kilowatts")
+                
+                PowerFlowCell(
                     icon: "bolt.fill",
-                    iconColor: data.gridKw > 0 ? .blue : .green,
-                    value: String(format: "%.1f", abs(data.gridKw)),
-                    label: data.gridKw > 0 ? "Import (kW)" : "Export (kW)"
+                    iconBackground: (data.isGridExporting ? Color.green : Color.blue).opacity(0.15),
+                    iconColor: data.isGridExporting ? .green : .blue,
+                    value: abs(data.gridKw),
+                    label: data.isGridExporting ? "Export (kW)" : "Import (kW)",
+                    onTap: { TabSelection.shared.selectedTab = .decisions }
                 )
-                EMSStatCell(
-                    icon: data.isCharging ? "battery.100.bolt" : "battery.75",
+                .accessibilityLabel("Grid \(data.isGridExporting ? "export" : "import"): \(String(format: "%.1f", abs(data.gridKw))) kilowatts")
+                
+                PowerFlowCell(
+                    icon: "battery.100.bolt",
+                    iconBackground: (data.isCharging ? Color.green : Color.orange).opacity(0.15),
                     iconColor: data.isCharging ? .green : .orange,
-                    value: String(format: "%.1f", abs(data.batteryKw)),
-                    label: data.isCharging ? "Charge (kW)" : "Discharge (kW)"
+                    value: abs(data.batteryKw),
+                    label: data.isCharging ? "Charge (kW)" : "Discharge (kW)",
+                    onTap: { TabSelection.shared.selectedTab = .decisions }
                 )
+                .accessibilityLabel("Battery \(data.isCharging ? "charging" : "discharging"): \(String(format: "%.1f", abs(data.batteryKw))) kilowatts")
             }
         }
-        .padding()
+        .padding(20)
         .background(Color(.systemBackground))
-        .cornerRadius(12)
-        .shadow(color: .black.opacity(0.05), radius: 4, y: 2)
+        .cornerRadius(16)
+        .shadow(color: .black.opacity(0.04), radius: 8, y: 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Power Flows")
     }
     
-    // MARK: - System Control Card
-    @ViewBuilder
-    var systemControlCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("System Control")
-                .font(.headline)
-                .fontWeight(.semibold)
-            
-            // Mode selector pills
-            HStack(spacing: 8) {
-                ForEach(["Auto", "Eco", "Max", "Set"], id: \.self) { mode in
-                    let isSelected = displayAction(data.currentAction) == mode || 
-                        (mode == "Auto" && ["Auto", "Hold"].contains(displayAction(data.currentAction)))
-                    
-                    Text(mode)
-                        .font(.subheadline)
-                        .fontWeight(isSelected ? .semibold : .regular)
-                        .foregroundColor(isSelected ? .primary : .secondary)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(isSelected ? Color.gray.opacity(0.15) : Color.clear)
-                        .cornerRadius(8)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color.gray.opacity(0.2), lineWidth: isSelected ? 0 : 1)
-                        )
-                }
-            }
-            
-            // Adjust Schedule button
-            NavigationLink(destination: ManualOverrideView()) {
-                Text("Adjust Schedule")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color.black)
-                    .cornerRadius(10)
-            }
-            .buttonStyle(.plain)
+    var modeBadgeAccessibilityLabel: String {
+        if api.hasPendingOverride {
+            return "Override pending"
+        } else if api.hasActiveOverride, let firstActive = api.currentOverrides.first {
+            return "Manual override active: \(firstActive.action)"
+        } else if api.hasScheduledOverride, let firstScheduled = api.scheduledOverrides.first {
+            return "Scheduled override: \(firstScheduled.action), starts \(firstScheduled.formattedStartsIn)"
+        } else {
+            return "Current mode: \(displayAction(data.currentAction))"
         }
-        .padding()
-        .background(Color(.systemBackground))
-        .cornerRadius(12)
-        .shadow(color: .black.opacity(0.05), radius: 4, y: 2)
-    }
-    
-    // MARK: - Financials Card
-    @ViewBuilder
-    var financialsCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Financials")
-                .font(.headline)
-                .fontWeight(.semibold)
-            
-            // Buy / Sell prices
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Buy Price")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(String(format: "%.1f¢", data.buyPrice ?? 0))
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.blue)
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("Sell Price")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(String(format: "%.1f¢", data.sellPrice ?? 0))
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                        .foregroundColor(data.sellPrice ?? 0 < 0 ? .red : .green)
-                }
-            }
-            
-            // P&L tiles
-            HStack(spacing: 12) {
-                EMSPLTile(label: "Today", period: .today)
-                EMSPLTile(label: "Week", period: .week)
-                EMSPLTile(label: "Month", period: .month)
-            }
-        }
-        .padding()
-        .background(Color(.systemBackground))
-        .cornerRadius(12)
-        .shadow(color: .black.opacity(0.05), radius: 4, y: 2)
     }
     
     // MARK: - Battery Status Card
     @ViewBuilder
     var batteryStatusCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             Text("Battery Status")
-                .font(.headline)
+                .font(.title3)
                 .fontWeight(.semibold)
             
-            HStack(spacing: 20) {
-                // SOC Ring
-                VStack(spacing: 8) {
+            HStack(alignment: .center, spacing: 24) {
+                // Left: SOC Ring
+                VStack(spacing: 12) {
                     ZStack {
+                        // Background track
                         Circle()
-                            .stroke(Color.gray.opacity(0.2), lineWidth: 10)
-                            .frame(width: 100, height: 100)
+                            .stroke(Color(.systemGray5), lineWidth: 10)
+                            .frame(width: 110, height: 110)
+                        
+                        // Progress arc
                         Circle()
                             .trim(from: 0, to: (data.batterySoc ?? 0) / 100)
                             .stroke(
                                 socColor(data.batterySoc ?? 0),
                                 style: StrokeStyle(lineWidth: 10, lineCap: .round)
                             )
-                            .frame(width: 100, height: 100)
+                            .frame(width: 110, height: 110)
                             .rotationEffect(.degrees(-90))
+                        
+                        // Center text
                         VStack(spacing: 0) {
-                            Text("\(Int(data.batterySoc ?? 0))")
-                                .font(.title)
-                                .fontWeight(.bold)
-                            + Text("%")
-                                .font(.caption)
-                                .fontWeight(.medium)
+                            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                                Text("\(Int(data.batterySoc ?? 0))")
+                                    .font(.system(size: 32, weight: .bold))
+                                Text("%")
+                                    .font(.system(size: 14, weight: .medium))
+                            }
                             Text("SOC")
-                                .font(.caption2)
+                                .font(.caption)
                                 .foregroundColor(.secondary)
                         }
                     }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Battery state of charge: \(Int(data.batterySoc ?? 0)) percent")
                     
-                    // Charging badge
+                    // Charging/Discharging badge
                     Text(data.isCharging ? "Charging" : "Discharging")
-                        .font(.caption)
+                        .font(.subheadline)
                         .fontWeight(.medium)
                         .foregroundColor(data.isCharging ? .green : .orange)
+                        .accessibilityLabel("Battery is \(data.isCharging ? "charging" : "discharging")")
                 }
+                
+                // Right: Stats
+                VStack(alignment: .leading, spacing: 14) {
+                    BatteryStatRow(label: "Capacity", value: formatCapacity())
+                        .accessibilityLabel("Battery capacity: \(formatCapacity())")
+                    BatteryStatRow(label: "Current Power", value: String(format: "%.1f kW", abs(data.batteryKw)))
+                        .accessibilityLabel("Current power: \(String(format: "%.1f", abs(data.batteryKw))) kilowatts")
+                    BatteryStatRow(label: "Time to \(data.isCharging ? "Full" : "Empty")", value: estimateTimeRemaining())
+                        .accessibilityLabel("Time to \(data.isCharging ? "full" : "empty"): \(estimateTimeRemaining())")
+                }
+                
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(20)
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
+        .shadow(color: .black.opacity(0.04), radius: 8, y: 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Battery Status")
+    }
+    
+    // MARK: - Financials Card
+    @ViewBuilder
+    var financialsCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Pricing")
+                .font(.title3)
+                .fontWeight(.semibold)
+            
+            // Buy / Sell prices in a row
+            HStack(spacing: 16) {
+                // Buy price
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(PriceColors.buyColor(data.buyPrice ?? 0).opacity(0.15))
+                            .frame(width: 36, height: 36)
+                        Image(systemName: "arrow.down.circle.fill")
+                            .foregroundColor(PriceColors.buyColor(data.buyPrice ?? 0))
+                    }
+                    .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Buy")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(PriceFormat.format(data.buyPrice ?? 0))
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                            .foregroundColor(PriceColors.buyColor(data.buyPrice ?? 0))
+                    }
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Buy price: \(PriceFormat.format(data.buyPrice ?? 0)) per kilowatt hour")
                 
                 Spacer()
                 
-                // Stats
-                VStack(alignment: .leading, spacing: 12) {
-                    EMSBatteryStatRow(label: "Capacity", value: formatCapacity())
-                    EMSBatteryStatRow(label: "Current Power", value: String(format: "%.1f kW", abs(data.batteryKw)))
-                    EMSBatteryStatRow(label: "Time to \(data.isCharging ? "Full" : "Empty")", value: estimateTimeRemaining())
+                // Sell price
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(PriceColors.sellColor(data.sellPrice ?? 0).opacity(0.15))
+                            .frame(width: 36, height: 36)
+                        Image(systemName: "arrow.up.circle.fill")
+                            .foregroundColor(PriceColors.sellColor(data.sellPrice ?? 0))
+                    }
+                    .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Sell")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(PriceFormat.format(data.sellPrice ?? 0))
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                            .foregroundColor(PriceColors.sellColor(data.sellPrice ?? 0))
+                    }
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Sell price: \(PriceFormat.format(data.sellPrice ?? 0)) per kilowatt hour")
+                
+                Spacer()
+            }
+            
+            Divider()
+                .accessibilityHidden(true)
+            
+            // P&L summary row (yesterday, last 7 days, last 30 days)
+            HStack(spacing: 12) {
+                EMSPLTile(label: "Yesterday", period: .today)
+                EMSPLTile(label: "7 Days", period: .week)
+                EMSPLTile(label: "30 Days", period: .month)
             }
         }
-        .padding()
+        .padding(20)
         .background(Color(.systemBackground))
-        .cornerRadius(12)
-        .shadow(color: .black.opacity(0.05), radius: 4, y: 2)
+        .cornerRadius(16)
+        .shadow(color: .black.opacity(0.04), radius: 8, y: 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Pricing")
     }
     
     // MARK: - Helpers
@@ -255,8 +309,8 @@ struct EMSDashboard: View {
         if lower.contains("curtail") { return "Curtail" }
         else if lower.contains("export") { return "Export" }
         else if lower.contains("import") { return "Import" }
-        else if lower.contains("charge") { return "Charge" }
         else if lower.contains("discharge") { return "Discharge" }
+        else if lower.contains("charge") { return "Charge" }
         else if lower.contains("auto") || lower.contains("hold") { return "Auto" }
         return action
     }
@@ -269,17 +323,26 @@ struct EMSDashboard: View {
     }
     
     func formatCapacity() -> String {
-        if let site = sites.first, let capacity = site.installedBattery {
+        // Sum battery capacity from all inverters for this site
+        if let siteId = api.selectedSiteId {
+            let siteInverters = api.inverters.filter { $0.siteId == siteId }
+            let totalCapacityWh = siteInverters.compactMap { $0.batteryCapacity }.reduce(0, +)
+            if totalCapacityWh > 0 {
+                return String(format: "%.1f kWh", Double(totalCapacityWh) / 1000)
+            }
+        }
+        // Fallback to site-level field
+        if let site = api.selectedSite, let capacity = site.installedBattery {
             return String(format: "%.1f kWh", Double(capacity) / 1000)
         }
-        return "—"
+        return "–"
     }
     
     func estimateTimeRemaining() -> String {
         guard abs(data.batteryKw) > 0.1,
-              let site = sites.first,
+              let site = api.selectedSite,
               let capacityWh = site.installedBattery else {
-            return "—"
+            return "–"
         }
         
         let capacityKwh = Double(capacityWh) / 1000
@@ -305,24 +368,64 @@ struct EMSDashboard: View {
             return "> 24h"
         }
     }
+    
+    func formatIntervalTime(_ str: String) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        
+        if let date = formatter.date(from: str) {
+            let timeFormatter = DateFormatter()
+            timeFormatter.dateFormat = "h:mm a"
+            timeFormatter.timeZone = powstonTimezone()
+            return timeFormatter.string(from: date)
+        }
+        
+        // Try without fractional seconds
+        formatter.formatOptions = [.withInternetDateTime]
+        if let date = formatter.date(from: str) {
+            let timeFormatter = DateFormatter()
+            timeFormatter.dateFormat = "h:mm a"
+            timeFormatter.timeZone = powstonTimezone()
+            return timeFormatter.string(from: date)
+        }
+        
+        return str
+    }
 }
 
-// MARK: - EMS Stat Cell
-struct EMSStatCell: View {
+// MARK: - Power Flow Cell
+struct PowerFlowCell: View {
     let icon: String
+    let iconBackground: Color
     let iconColor: Color
-    let value: String
+    let value: Double
     let label: String
+    var showBadge: Bool = false
+    var onTap: (() -> Void)? = nil
     
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.title2)
-                .foregroundColor(iconColor)
-                .frame(width: 32)
+            // Icon in colored background
+            ZStack(alignment: .topTrailing) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(iconBackground)
+                        .frame(width: 40, height: 40)
+                    Image(systemName: icon)
+                        .font(.system(size: 18))
+                        .foregroundColor(iconColor)
+                }
+                
+                if showBadge {
+                    Image(systemName: "plusminus.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(.orange)
+                        .offset(x: 4, y: -4)
+                }
+            }
             
             VStack(alignment: .leading, spacing: 2) {
-                Text(value)
+                Text(String(format: "%.1f", value))
                     .font(.title2)
                     .fontWeight(.semibold)
                     .monospacedDigit()
@@ -331,10 +434,32 @@ struct EMSStatCell: View {
                     .foregroundColor(.secondary)
             }
             
-            Spacer()
+            Spacer(minLength: 0)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onTap?()
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(label): \(value)")
+        .accessibilityLabel("\(label): \(String(format: "%.1f", value))\(showBadge ? ", includes unmetered load" : "")")
+    }
+}
+
+// MARK: - Battery Stat Row
+struct BatteryStatRow: View {
+    let label: String
+    let value: String
+    
+    var body: some View {
+        HStack {
+            Text(label)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            Spacer()
+            Text(value)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+        }
     }
 }
 
@@ -366,7 +491,7 @@ struct EMSPLTile: View {
                         .fontWeight(.semibold)
                         .foregroundColor(net >= 0 ? .green : .red)
                 } else {
-                    Text("—")
+                    Text("–")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -376,7 +501,7 @@ struct EMSPLTile: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
-            .background(Color.gray.opacity(0.08))
+            .background(Color(.systemGray6))
             .cornerRadius(10)
         }
         .buttonStyle(.plain)
@@ -400,52 +525,49 @@ struct EMSPLTile: View {
         var calendar = Calendar.current
         calendar.timeZone = powstonTimezone()
         
-        let today = calendar.startOfDay(for: Date())
-        let fromDate: Date
-        let toDate = today
+        // Use yesterday as the reference point (last complete day)
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: Date()) ?? Date()
         
         switch period {
         case .today:
-            fromDate = today
-        case .week:
-            fromDate = calendar.date(byAdding: .day, value: -7, to: today) ?? today
-        case .month:
-            fromDate = calendar.date(byAdding: .day, value: -30, to: today) ?? today
-        }
-        
-        let records = await api.fetchMeterRecords(fromDate: fromDate, toDate: toDate)
-        
-        await MainActor.run {
-            if !records.isEmpty {
-                let earnings = records.compactMap { $0.earnings }.reduce(0, +) / 100.0
-                let costs = records.compactMap { $0.costs }.reduce(0, +) / 100.0
-                netValue = earnings - costs
+            // Yesterday (last complete day) - use day_rates API
+            if let summary = await api.fetchDaySummary(date: yesterday) {
+                await MainActor.run {
+                    netValue = summary.earningsDollars - summary.costsDollars
+                    isLoading = false
+                }
+            } else {
+                await MainActor.run { isLoading = false }
             }
-            isLoading = false
+            
+        case .week:
+            // Last 7 complete days ending yesterday - use week breakdown
+            let weekData = await api.fetchWeekDailyBreakdown(containing: yesterday)
+            await MainActor.run {
+                if !weekData.isEmpty {
+                    let earnings = weekData.reduce(0) { $0 + $1.earningsDollars }
+                    let costs = weekData.reduce(0) { $0 + $1.costsDollars }
+                    netValue = earnings - costs
+                }
+                isLoading = false
+            }
+            
+        case .month:
+            // Last 30 complete days ending yesterday - use custom range summary
+            let startDate = calendar.date(byAdding: .day, value: -29, to: yesterday) ?? yesterday
+            if let summary = await api.fetchCustomRangeSummary(startDate: startDate, endDate: yesterday) {
+                await MainActor.run {
+                    netValue = summary.earningsDollars - summary.costsDollars
+                    isLoading = false
+                }
+            } else {
+                await MainActor.run { isLoading = false }
+            }
         }
     }
     
     func formatCurrency(_ value: Double) -> String {
         let absValue = abs(value)
-        let prefix = value >= 0 ? "+$" : "-$"
-        return prefix + String(format: "%.2f", absValue)
-    }
-}
-
-// MARK: - EMS Battery Stat Row
-struct EMSBatteryStatRow: View {
-    let label: String
-    let value: String
-    
-    var body: some View {
-        HStack {
-            Text(label)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            Spacer()
-            Text(value)
-                .font(.subheadline)
-                .fontWeight(.medium)
-        }
+        return String(format: "$%.2f", absValue)
     }
 }

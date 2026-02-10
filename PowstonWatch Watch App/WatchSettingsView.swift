@@ -93,7 +93,6 @@ struct WatchSettingsView: View {
                 
                 Section("Site ID") {
                     TextField("Site ID", text: $manualSiteId)
-                        .keyboardType(.numberPad)
                 }
                 
                 Section {

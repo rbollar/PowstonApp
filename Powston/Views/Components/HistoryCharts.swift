@@ -57,8 +57,32 @@ struct DailySummary: Identifiable {
     let totalCosts: Double
     let avgSoc: Double
     let recordCount: Int
+    let netProfit: Double  // Stored value from expectedBill, not computed
     
-    var netProfit: Double { totalEarnings - totalCosts }
+    /// Backward-compatible init that computes netProfit (for meter_records path)
+    init(date: Date, totalImport: Double, totalExport: Double, totalEarnings: Double, totalCosts: Double, avgSoc: Double, recordCount: Int) {
+        self.date = date
+        self.totalImport = totalImport
+        self.totalExport = totalExport
+        self.totalEarnings = totalEarnings
+        self.totalCosts = totalCosts
+        self.avgSoc = avgSoc
+        self.recordCount = recordCount
+        self.netProfit = totalEarnings - totalCosts  // Fallback computation
+    }
+    
+    /// Preferred init with explicit netProfit from expectedBill
+    init(date: Date, totalImport: Double, totalExport: Double, totalEarnings: Double, totalCosts: Double, avgSoc: Double, recordCount: Int, netProfit: Double) {
+        self.date = date
+        self.totalImport = totalImport
+        self.totalExport = totalExport
+        self.totalEarnings = totalEarnings
+        self.totalCosts = totalCosts
+        self.avgSoc = avgSoc
+        self.recordCount = recordCount
+        self.netProfit = netProfit
+    }
+    
     var dayOfMonth: Int { Calendar.current.component(.day, from: date) }
     var dayLabel: String {
         let f = DateFormatter()
@@ -310,62 +334,455 @@ struct MonthlyProfitChart: View {
     }
 }
 
-// MARK: - Action SOC Chart View
+// MARK: - Savings Analysis Card
 
-struct ActionSOCChartView: View {
-    let points: [ActionSOCPoint]
+struct SavingsAnalysisCard: View {
+    let analysis: SavingsAnalysis
+    let networkName: String?
+    let importTariff: String?
+    let exportTariff: String?
+    var p2pCounterparties: [P2PCounterpartyTrade] = []
+    var p2pImportDateRange: String? = nil  // e.g., "Jan 20-26" if multi-day import
     
-    var sortedPoints: [ActionSOCPoint] { points.sorted { $0.time < $1.time } }
-    var timeRange: (Date, Date) {
-        guard let first = sortedPoints.first?.time, let last = sortedPoints.last?.time else { return (Date(), Date()) }
-        return (first, last)
+    @State private var showCounterparties = false
+    
+    private func formatCurrency(_ value: Double) -> String {
+        String(format: "$%.2f", abs(value))
     }
     
-    var body: some View {
-        GeometryReader { geo in
-            let w = geo.size.width - 40, h = geo.size.height - 25
-            ZStack(alignment: .topLeading) {
-                ForEach([0.0, 25.0, 50.0, 75.0, 100.0], id: \.self) { soc in
-                    let y = h * (1 - soc / 100)
-                    Path { p in p.move(to: CGPoint(x: 35, y: y)); p.addLine(to: CGPoint(x: w + 35, y: y)) }.stroke(Color.gray.opacity(0.2), lineWidth: 1)
-                    Text("\(Int(soc))%").font(.system(size: 9)).foregroundColor(.secondary).position(x: 18, y: y)
+    // Solar: savings (positive) or cost (negative)
+    private var solarLabel: String {
+        analysis.solarSavings >= 0 ? "Solar savings:" : "Solar cost:"
+    }
+    
+    // Powston: savings (positive) or cost (negative)
+    private var powstonLabel: String {
+        analysis.powstonSavings >= 0 ? "Powston savings:" : "Powston cost:"
+    }
+    
+    // Build tariff description
+    private var tariffDescription: String? {
+        var parts: [String] = []
+        if let network = networkName, !network.isEmpty {
+            parts.append(network)
+        }
+        if let importT = importTariff, !importT.isEmpty {
+            parts.append(importT)
+        }
+        if let exportT = exportTariff, !exportT.isEmpty, exportT != importTariff {
+            parts.append(exportT)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " / ")
+    }
+    
+    // Aggregate trades by counterparty name
+    private struct AggregatedCounterparty: Identifiable {
+        let id = UUID()
+        let name: String
+        let totalVolume: Double
+        let avgPriceCents: Double
+        let direction: P2PTradeDirection
+        let facilities: [String]  // Unique facilities for this counterparty
+    }
+
+    private func aggregateByCounterparty(_ trades: [P2PCounterpartyTrade]) -> [AggregatedCounterparty] {
+        let grouped = Dictionary(grouping: trades) { $0.counterpartyName }
+        return grouped.compactMap { (name, trades) -> AggregatedCounterparty? in
+            guard !trades.isEmpty else { return nil }
+            let totalVolume = trades.reduce(0) { $0 + $1.volumeKwh }
+            let totalRevenue = trades.reduce(0) { $0 + $1.volumeKwh * $1.priceCents }
+            let avgPrice = totalVolume > 0 ? totalRevenue / totalVolume : 0
+            let facilities = Array(Set(trades.compactMap { $0.facility })).sorted()
+            return AggregatedCounterparty(
+                name: name,
+                totalVolume: totalVolume,
+                avgPriceCents: avgPrice,
+                direction: trades.first?.direction ?? .sell,
+                facilities: facilities
+            )
+        }.sorted { $0.totalVolume > $1.totalVolume }
+    }
+
+    // P2P counterparty list for disclosure - grouped by direction and aggregated by name
+    private var p2pCounterpartyList: some View {
+        let sellTrades = p2pCounterparties.filter { $0.direction == .sell }
+        let buyTrades = p2pCounterparties.filter { $0.direction == .buy }
+        let sells = aggregateByCounterparty(sellTrades)
+        let buys = aggregateByCounterparty(buyTrades)
+        let classifier = P2PCounterpartyClassifier.shared
+
+        return VStack(alignment: .leading, spacing: 6) {
+            // Sells section
+            if !sells.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.caption2)
+                        .foregroundColor(.green)
+                    Text("Sold to")
+                        .font(.caption2.bold())
+                        .foregroundColor(.green)
                 }
-                Path { p in
-                    guard let first = sortedPoints.first else { return }
-                    let sx = xPos(first.time, w) + 35, sy = h * (1 - first.soc / 100)
-                    p.move(to: CGPoint(x: sx, y: h)); p.addLine(to: CGPoint(x: sx, y: sy))
-                    for pt in sortedPoints { p.addLine(to: CGPoint(x: xPos(pt.time, w) + 35, y: h * (1 - pt.soc / 100))) }
-                    if let last = sortedPoints.last { p.addLine(to: CGPoint(x: xPos(last.time, w) + 35, y: h)) }
-                    p.closeSubpath()
-                }.fill(Color.green.opacity(0.2))
-                Path { p in
-                    for (i, pt) in sortedPoints.enumerated() {
-                        let x = xPos(pt.time, w) + 35, y = h * (1 - pt.soc / 100)
-                        if i == 0 { p.move(to: CGPoint(x: x, y: y)) } else { p.addLine(to: CGPoint(x: x, y: y)) }
-                    }
-                }.stroke(Color.green, lineWidth: 2)
-                timeLabels(w: w, h: h)
+
+                ForEach(sells.prefix(5)) { cp in
+                    aggregatedCounterpartyRow(cp: cp, classifier: classifier, isSell: true)
+                }
+
+                if sells.count > 5 {
+                    Text("+ \(sells.count - 5) more buyers")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 18)
+                }
+            }
+
+            // Buys section
+            if !buys.isEmpty {
+                if !sells.isEmpty {
+                    Divider()
+                        .padding(.vertical, 2)
+                }
+
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                    Text("Bought from")
+                        .font(.caption2.bold())
+                        .foregroundColor(.orange)
+                }
+
+                ForEach(buys.prefix(5)) { cp in
+                    aggregatedCounterpartyRow(cp: cp, classifier: classifier, isSell: false)
+                }
+
+                if buys.count > 5 {
+                    Text("+ \(buys.count - 5) more sellers")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 18)
+                }
             }
         }
+        .padding(.vertical, 4)
+        .padding(.leading, 24)
     }
-    
-    func xPos(_ date: Date, _ w: CGFloat) -> CGFloat {
-        let total = timeRange.1.timeIntervalSince(timeRange.0)
-        guard total > 0 else { return 0 }
-        return CGFloat(date.timeIntervalSince(timeRange.0) / total) * w
-    }
-    
-    func timeLabels(w: CGFloat, h: CGFloat) -> some View {
-        let f = DateFormatter(); f.timeZone = powstonTimezone(); f.dateFormat = "ha"
-        let count = min(sortedPoints.count, 6)
-        guard count > 0 else { return AnyView(EmptyView()) }
-        let step = max(1, sortedPoints.count / count)
-        return AnyView(
-            ForEach(Array(stride(from: 0, to: sortedPoints.count, by: step)), id: \.self) { i in
-                let pt = sortedPoints[i]
-                Text(f.string(from: pt.time)).font(.system(size: 9)).foregroundColor(.secondary).position(x: xPos(pt.time, w) + 35, y: h + 12)
+
+    private func aggregatedCounterpartyRow(cp: AggregatedCounterparty, classifier: P2PCounterpartyClassifier, isSell: Bool) -> some View {
+        HStack(spacing: 6) {
+            // Commercial indicator
+            if classifier.isCommercial(cp.name) {
+                Image(systemName: "building.2.fill")
+                    .font(.caption2)
+                    .foregroundColor(.blue)
+                    .frame(width: 12)
+            } else {
+                Image(systemName: "person.fill")
+                    .font(.caption2)
+                    .foregroundColor(isSell ? .green : .orange)
+                    .frame(width: 12)
             }
-        )
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text(cp.name)
+                    .font(.caption2)
+                    .lineLimit(1)
+                    .foregroundColor(.secondary)
+
+                // Show facility if available
+                if cp.facilities.count == 1, let facility = cp.facilities.first {
+                    Text(facility)
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary.opacity(0.7))
+                } else if cp.facilities.count > 1 {
+                    Text("\(cp.facilities.count) locations")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary.opacity(0.7))
+                }
+            }
+
+            Spacer()
+
+            Text(String(format: "%.2f kWh", cp.totalVolume))
+                .font(.caption2.monospacedDigit())
+                .foregroundColor(isSell ? .green : .orange)
+
+            Text(String(format: "%.0f¢", cp.avgPriceCents))
+                .font(.caption2.monospacedDigit())
+                .foregroundColor(isSell ? (cp.avgPriceCents >= 25 ? .green : .secondary) : .orange)
+                .frame(width: 30, alignment: .trailing)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "lightbulb.fill")
+                    .foregroundColor(.yellow)
+                Text("Savings Analysis")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Spacer()
+                if analysis.usedDerivedData {
+                    Label("Estimated", systemImage: "info.circle")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+            }
+            
+            Divider()
+            
+            // Grid only baseline
+            HStack {
+                Image(systemName: "powerplug.fill")
+                    .foregroundColor(.gray)
+                    .frame(width: 20)
+                Text("Grid only:")
+                    .font(.subheadline)
+                Spacer()
+                Text(formatCurrency(analysis.gridOnlyCost))
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundColor(.secondary)
+            }
+            
+            // Solar contribution
+            HStack {
+                Image(systemName: "sun.max.fill")
+                    .foregroundColor(.yellow)
+                    .frame(width: 20)
+                Text(solarLabel)
+                    .font(.subheadline)
+                Spacer()
+                Text(formatCurrency(analysis.solarSavings))
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundColor(analysis.solarSavings >= 0 ? .green : .red)
+            }
+            
+            // Battery contribution (always savings)
+            HStack {
+                Image(systemName: "battery.100percent")
+                    .foregroundColor(.green)
+                    .frame(width: 20)
+                Text("Battery savings:")
+                    .font(.subheadline)
+                Spacer()
+                Text(formatCurrency(analysis.batterySavings))
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundColor(.green)
+            }
+            
+            // Powston optimization (can be savings or cost)
+            HStack {
+                Image(systemName: "brain.head.profile")
+                    .foregroundColor(.purple)
+                    .frame(width: 20)
+                Text(powstonLabel)
+                    .font(.subheadline)
+                Spacer()
+                Text(formatCurrency(analysis.powstonSavings))
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundColor(analysis.powstonSavings >= 0 ? .green : .red)
+            }
+            
+            Divider()
+            
+            // Actual result
+            HStack {
+                Image(systemName: analysis.actualCost <= 0 ? "checkmark.circle.fill" : "dollarsign.circle.fill")
+                    .foregroundColor(analysis.actualCost <= 0 ? .green : .orange)
+                    .frame(width: 20)
+                Text(analysis.actualCost <= 0 ? "Actual benefit:" : "Actual cost:")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Spacer()
+                Text(formatCurrency(analysis.actualCost))
+                    .font(.subheadline.monospacedDigit())
+                    .fontWeight(.medium)
+            }
+            
+            // P2P Sell memo line (shown indented under Actual benefit when P2P sell data exists)
+            // P2P revenue is already included in Actual - this shows the breakdown
+            if analysis.hasP2PSellData {
+                HStack(spacing: 4) {
+                    Text("└")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .frame(width: 20, alignment: .trailing)
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.caption2)
+                        .foregroundColor(.green)
+                    Text("P2P Sell:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text(formatCurrency(analysis.p2pSellRevenue))
+                        .font(.caption.monospacedDigit())
+                        .foregroundColor(.green)
+                }
+                .padding(.leading, 4)
+
+                // P2P Sell premium/loss vs spot
+                HStack(spacing: 4) {
+                    Text(" ")
+                        .frame(width: 20)
+                    Text(analysis.p2pSellPremium >= 0 ? "vs spot bonus:" : "vs spot loss:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text(String(format: "%@$%.2f", analysis.p2pSellPremium >= 0 ? "+" : "", analysis.p2pSellPremium))
+                        .font(.caption.monospacedDigit())
+                        .foregroundColor(analysis.p2pSellPremium >= 0 ? .green : .orange)
+                }
+                .padding(.leading, 4)
+            }
+
+            // P2P Buy memo line (shown when P2P buy data exists)
+            if analysis.hasP2PBuyData {
+                HStack(spacing: 4) {
+                    Text("└")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .frame(width: 20, alignment: .trailing)
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                    Text("P2P Buy:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text(formatCurrency(-analysis.p2pBuyCost))  // Show as negative cost
+                        .font(.caption.monospacedDigit())
+                        .foregroundColor(.orange)
+                }
+                .padding(.leading, 4)
+
+                // P2P Buy savings vs spot
+                HStack(spacing: 4) {
+                    Text(" ")
+                        .frame(width: 20)
+                    Text(analysis.p2pBuySavings >= 0 ? "vs spot saved:" : "vs spot extra:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text(String(format: "%@$%.2f", analysis.p2pBuySavings >= 0 ? "+" : "", analysis.p2pBuySavings))
+                        .font(.caption.monospacedDigit())
+                        .foregroundColor(analysis.p2pBuySavings >= 0 ? .green : .orange)
+                }
+                .padding(.leading, 4)
+            }
+
+            // Net P2P impact (when both buy and sell exist)
+            if analysis.hasP2PSellData && analysis.hasP2PBuyData {
+                let netP2P = analysis.p2pSellRevenue - analysis.p2pBuyCost
+                HStack(spacing: 4) {
+                    Text(" ")
+                        .frame(width: 20)
+                    Image(systemName: "person.2.fill")
+                        .font(.caption2)
+                        .foregroundColor(.cyan)
+                    Text("P2P Net:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text(formatCurrency(netP2P))
+                        .font(.caption.monospacedDigit())
+                        .foregroundColor(netP2P >= 0 ? .cyan : .orange)
+                }
+                .padding(.leading, 4)
+            }
+
+            // Counterparty breakdown disclosure
+            if !p2pCounterparties.isEmpty {
+                let buyerCount = p2pCounterparties.filter { $0.direction == .sell }.count
+                let sellerCount = p2pCounterparties.filter { $0.direction == .buy }.count
+                DisclosureGroup(isExpanded: $showCounterparties) {
+                    p2pCounterpartyList
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(" ")
+                            .frame(width: 20)
+                        Image(systemName: "person.2.fill")
+                            .font(.caption2)
+                            .foregroundColor(.purple)
+                        // Show breakdown: "3 buyers, 2 sellers" or just count if only one type
+                        if buyerCount > 0 && sellerCount > 0 {
+                            Text("\(buyerCount) buyer\(buyerCount == 1 ? "" : "s"), \(sellerCount) seller\(sellerCount == 1 ? "" : "s")")
+                                .font(.caption)
+                                .foregroundColor(.purple)
+                        } else if buyerCount > 0 {
+                            Text("\(buyerCount) buyer\(buyerCount == 1 ? "" : "s")")
+                                .font(.caption)
+                                .foregroundColor(.green)
+                        } else {
+                            Text("\(sellerCount) seller\(sellerCount == 1 ? "" : "s")")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                        if let range = p2pImportDateRange {
+                            Text("(\(range))")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .font(.caption)
+                .tint(.purple)
+                .padding(.leading, 4)
+            }
+            
+            // Flat rate comparison
+            HStack {
+                Image(systemName: "equal.circle.fill")
+                    .foregroundColor(.blue)
+                    .frame(width: 20)
+                Text("Flat rate (\(Int(analysis.flatBuyRate))¢/\(Int(analysis.flatSellRate))¢):")
+                    .font(.subheadline)
+                Spacer()
+                Text(formatCurrency(analysis.flatRateCost))
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundColor(.secondary)
+            }
+            
+            // Flat rate comparison result
+            if analysis.flatRateSavings > 0.01 {
+                HStack {
+                    Spacer()
+                    Text("Beat flat rate by \(formatCurrency(analysis.flatRateSavings))")
+                        .font(.caption)
+                        .foregroundColor(.green)
+                }
+            } else if analysis.flatRateSavings < -0.01 {
+                HStack {
+                    Spacer()
+                    Text("Flat rate would save \(formatCurrency(analysis.flatRateSavings))")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+            }
+            
+            // Total savings summary
+            if analysis.totalSavings > 0 {
+                HStack {
+                    Spacer()
+                    Text("Saved \(formatCurrency(analysis.totalSavings)) vs grid-only")
+                        .font(.caption)
+                        .foregroundColor(.green)
+                }
+            }
+            
+            // Tariff disclaimer
+            if let tariffDesc = tariffDescription {
+                HStack {
+                    Spacer()
+                    Text("Based on \(tariffDesc)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(Color.gray.opacity(0.05))
+        .cornerRadius(12)
     }
 }
 

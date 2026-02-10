@@ -8,6 +8,7 @@
 
 import ActivityKit
 import Foundation
+import Combine
 
 @MainActor
 class LiveActivityManager: ObservableObject {
@@ -44,12 +45,8 @@ class LiveActivityManager: ObservableObject {
             return
         }
         
-        // End any existing activity first
-        Task {
-            await endCurrentActivity()
-        }
-        
         let attributes = PowstonActivityAttributes(
+            // ... rest of code
             activityId: activityId,
             siteName: siteName
         )
@@ -122,47 +119,173 @@ class LiveActivityManager: ObservableObject {
     }
     
     /// Update progress of active override
-    func updateProgress(endTime: Date, startTime: Date) async {
-        guard let activity = currentActivity,
-              activity.content.state.status == .active else { return }
+    /// Sync Live Activity state with current overrides from API
+        /// Call this when app opens or refreshes override data
+        func syncWithOverrides(
+            currentOverrides: [ManualAction],
+            scheduledOverrides: [ManualAction],
+            siteName: String,
+            currentInverterCount: Int = 1,
+            scheduledInverterCount: Int = 1
+        ) async {
+            let hasActiveOverride = !currentOverrides.isEmpty
+            let hasScheduledOverride = !scheduledOverrides.isEmpty
+            let hasAnyOverride = hasActiveOverride || hasScheduledOverride
+            
+            // If no overrides but we have a Live Activity, end it
+            if !hasAnyOverride {
+                if currentActivity != nil {
+                    await endAsCompleted()
+                }
+                return
+            }
+            
+            // Determine which override to show (active takes priority over scheduled)
+            if hasActiveOverride, let active = currentOverrides.first {
+                let mode = active.action
+                let inverterCount = max(1, currentInverterCount)
+                
+                if currentActivity == nil {
+                    // No Live Activity - create one in active state
+                    startPendingOverride(
+                        activityId: UUID().uuidString,
+                        mode: mode,
+                        inverterCount: inverterCount,
+                        siteName: siteName,
+                        endTime: active.endDate ?? Date().addingTimeInterval(3600),
+                        startTime: active.startDate
+                    )
+                    // Immediately update to active
+                    if let endTime = active.endDate {
+                        await updateToActive(endTime: endTime, startTime: active.startDate)
+                    }
+                } else {
+                    // Live Activity exists - update to active if not already
+                    if let endTime = active.endDate {
+                        await updateToActive(endTime: endTime, startTime: active.startDate)
+                    }
+                }
+            } else if hasScheduledOverride, let scheduled = scheduledOverrides.first {
+                let mode = scheduled.action
+                let inverterCount = max(1, scheduledInverterCount)
+                
+                if currentActivity == nil {
+                    // No Live Activity - create one in scheduled state
+                    startPendingOverride(
+                        activityId: UUID().uuidString,
+                        mode: mode,
+                        inverterCount: inverterCount,
+                        siteName: siteName,
+                        endTime: scheduled.endDate ?? Date().addingTimeInterval(3600),
+                        startTime: scheduled.startDate
+                    )
+                    // Immediately update to scheduled
+                    if let startTime = scheduled.startDate, let endTime = scheduled.endDate {
+                        await updateToScheduled(startTime: startTime, endTime: endTime)
+                    }
+                } else {
+                    // Live Activity exists - update to scheduled
+                    if let startTime = scheduled.startDate, let endTime = scheduled.endDate {
+                        await updateToScheduled(startTime: startTime, endTime: endTime)
+                    }
+                }
+            }
+        }
+    
+    /// Sync Live Activity state with current overrides from API
+    /// Call this when app opens or refreshes override data
+    func syncWithOverrides(currentOverrides: [ManualAction], scheduledOverrides: [ManualAction], siteName: String) async {
+        let hasActiveOverride = !currentOverrides.isEmpty
+        let hasScheduledOverride = !scheduledOverrides.isEmpty
+        let hasAnyOverride = hasActiveOverride || hasScheduledOverride
         
-        let duration = endTime.timeIntervalSince(startTime)
-        let elapsed = Date().timeIntervalSince(startTime)
-        let progress = duration > 0 ? min(1.0, max(0, elapsed / duration)) : 0
+        // If no overrides but we have a Live Activity, end it
+        if !hasAnyOverride {
+            if currentActivity != nil {
+                await endAsCompleted()
+            }
+            return
+        }
         
-        let state = PowstonActivityAttributes.ContentState(
-            status: .active,
-            mode: activity.content.state.mode,
-            endTime: endTime,
-            startTime: startTime,
-            inverterCount: activity.content.state.inverterCount,
-            progress: progress
-        )
-        
-        await activity.update(.init(state: state, staleDate: nil))
+        // Determine which override to show (active takes priority over scheduled)
+        if hasActiveOverride, let active = currentOverrides.first {
+            let mode = active.action
+            
+            if currentActivity == nil {
+                // No Live Activity - create one in active state
+                startPendingOverride(
+                    activityId: UUID().uuidString,
+                    mode: mode,
+                    inverterCount: active.inverterId > 0 ? 2 : 1,  // Estimate from grouped data
+                    siteName: siteName,
+                    endTime: active.endDate ?? Date().addingTimeInterval(3600),
+                    startTime: active.startDate
+                )
+                // Immediately update to active
+                if let endTime = active.endDate {
+                    await updateToActive(endTime: endTime, startTime: active.startDate)
+                }
+            } else {
+                // Live Activity exists - update to active if not already
+                if let endTime = active.endDate {
+                    await updateToActive(endTime: endTime, startTime: active.startDate)
+                }
+            }
+        } else if hasScheduledOverride, let scheduled = scheduledOverrides.first {
+            let mode = scheduled.action
+            
+            if currentActivity == nil {
+                // No Live Activity - create one in scheduled state
+                startPendingOverride(
+                    activityId: UUID().uuidString,
+                    mode: mode,
+                    inverterCount: 2,  // Assume multi-inverter
+                    siteName: siteName,
+                    endTime: scheduled.endDate ?? Date().addingTimeInterval(3600),
+                    startTime: scheduled.startDate
+                )
+                // Immediately update to scheduled
+                if let startTime = scheduled.startDate, let endTime = scheduled.endDate {
+                    await updateToScheduled(startTime: startTime, endTime: endTime)
+                }
+            } else {
+                // Live Activity exists - update to scheduled
+                if let startTime = scheduled.startDate, let endTime = scheduled.endDate {
+                    await updateToScheduled(startTime: startTime, endTime: endTime)
+                }
+            }
+        }
     }
     
     // MARK: - End Activity
     
     /// End with completed status
+    /// Check if there's currently an active Live Activity
+    var hasActiveActivity: Bool {
+        currentActivity != nil
+    }
+
+    /// End activity as completed (normal end, not cancelled)
+    /// End activity as completed (normal end, not cancelled)
     func endAsCompleted() async {
         guard let activity = currentActivity else { return }
         
         let finalState = PowstonActivityAttributes.ContentState(
             status: .completed,
             mode: activity.content.state.mode,
-            endTime: activity.content.state.endTime,
+            endTime: Date(),
             startTime: activity.content.state.startTime,
             inverterCount: activity.content.state.inverterCount,
             progress: 1.0
         )
         
         await activity.end(
-            .init(state: finalState, staleDate: nil),
-            dismissalPolicy: .after(Date().addingTimeInterval(60)) // Show for 1 minute
+            ActivityContent(state: finalState, staleDate: nil),
+            dismissalPolicy: .after(.now + 5)
         )
+        
         currentActivity = nil
-        print("✅ Ended Live Activity as completed")
+        print("✅ Live Activity ended as completed")
     }
     
     /// End with cancelled status
