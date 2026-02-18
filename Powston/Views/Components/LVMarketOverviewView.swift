@@ -208,7 +208,7 @@ struct LVMarketOverviewView: View {
     /// Yesterday's contracts from historical data (complete 24-hour day)
     private var yesterdayContracts: [LVMarketContract] {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "Australia/Brisbane")!
+        calendar.timeZone = powstonTimezone()
         let today = calendar.startOfDay(for: Date())
         guard let yesterday = calendar.date(byAdding: .day, value: -1, to: today) else {
             return []
@@ -687,10 +687,19 @@ struct LVMarketOverviewView: View {
                     .padding()
             } else {
 
-                // Candlestick-style chart: P25-P75 range with median
+                // Candlestick-style chart: P10-P90 whiskers, P25-P75 body, median + VWAP
                 Chart {
                     ForEach(hourlyStats) { stat in
                         let isSelected = selectedHourlyStat?.hour == stat.hour
+
+                        // P10-P90 whisker (thin line)
+                        RectangleMark(
+                            x: .value("Hour", stat.hour),
+                            yStart: .value("P10", stat.p10SellPrice),
+                            yEnd: .value("P90", stat.p90SellPrice),
+                            width: .fixed(2)
+                        )
+                        .foregroundStyle(isSelected ? chartColor.opacity(0.5) : chartColor.opacity(0.25))
 
                         // P25-P75 range as vertical bar (candlestick body)
                         RectangleMark(
@@ -709,9 +718,19 @@ struct LVMarketOverviewView: View {
                             width: .fixed(12)
                         )
                         .foregroundStyle(isSelected ? chartColor : chartColor.opacity(0.8))
+
+                        // VWAP dot (when it differs from median)
+                        if stat.hasVolumeWeighting {
+                            PointMark(
+                                x: .value("Hour", stat.hour),
+                                y: .value("VWAP", stat.vwapSellPrice)
+                            )
+                            .symbolSize(20)
+                            .foregroundStyle(.yellow)
+                        }
                     }
                 }
-                .frame(height: 160)
+                .frame(height: 200)
                 .chartXAxis {
                     AxisMarks(values: [0, 6, 12, 18, 23]) { value in
                         AxisValueLabel {
@@ -743,6 +762,7 @@ struct LVMarketOverviewView: View {
                                 .font(.caption)
                                 .foregroundColor(.purple)
                         }
+                        // Row 1: Median, VWAP, Volume
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Median")
@@ -754,11 +774,12 @@ struct LVMarketOverviewView: View {
                             }
                             Spacer()
                             VStack(alignment: .center, spacing: 2) {
-                                Text("Range")
+                                Text("VWAP")
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
-                                Text(String(format: "%.0f–%.0f¢", stat.p25SellPrice, stat.p75SellPrice))
+                                Text(String(format: "%.1f¢", stat.vwapSellPrice))
                                     .font(.subheadline.bold())
+                                    .foregroundColor(stat.hasVolumeWeighting ? .yellow : .secondary)
                             }
                             Spacer()
                             VStack(alignment: .trailing, spacing: 2) {
@@ -768,6 +789,33 @@ struct LVMarketOverviewView: View {
                                 Text(String(format: "%.1f kWh", stat.totalVolume))
                                     .font(.subheadline.bold())
                                     .foregroundColor(.green)
+                            }
+                        }
+                        // Row 2: Percentile spread
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("P10–P90")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Text(String(format: "%.0f–%.0f¢", stat.p10SellPrice, stat.p90SellPrice))
+                                    .font(.caption.bold())
+                            }
+                            Spacer()
+                            VStack(alignment: .center, spacing: 2) {
+                                Text("P25–P75")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Text(String(format: "%.0f–%.0f¢", stat.p25SellPrice, stat.p75SellPrice))
+                                    .font(.caption.bold())
+                            }
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text("LV Fee")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Text(String(format: "%.2f¢", stat.matchingFee))
+                                    .font(.caption.bold())
+                                    .foregroundColor(.orange)
                             }
                         }
                     }
@@ -791,6 +839,22 @@ struct LVMarketOverviewView: View {
                                 .cornerRadius(2)
                             Text("P25–P75")
                                 .foregroundColor(.secondary)
+                        }
+                        HStack(spacing: 4) {
+                            Rectangle()
+                                .fill(chartColor.opacity(0.25))
+                                .frame(width: 2, height: 14)
+                            Text("P10–P90")
+                                .foregroundColor(.secondary)
+                        }
+                        if hourlyStats.contains(where: { $0.hasVolumeWeighting }) {
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(.yellow)
+                                    .frame(width: 6, height: 6)
+                                Text("VWAP")
+                                    .foregroundColor(.secondary)
+                            }
                         }
                         Spacer()
                     }
@@ -1047,7 +1111,7 @@ struct LVMarketOverviewView: View {
 
         // Load all historical contracts (last 60 days)
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "Australia/Brisbane")!
+        calendar.timeZone = powstonTimezone()
         let sixtyDaysAgo = calendar.date(byAdding: .day, value: -60, to: Date())!
         allContracts = PowstonDataStore.shared.getLVMarketContracts(from: sixtyDaysAgo, to: Date())
     }

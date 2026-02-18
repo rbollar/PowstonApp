@@ -173,30 +173,37 @@ class ActionItemsEngine: ObservableObject {
     private func convertBargainHunterToItems(_ result: BargainHunterResult) -> [ActionItem] {
         var items: [ActionItem] = []
 
-        // "Could have waited" recommendation
-        if result.breakdown.bestNFailures.count > 0 && result.potentialSavingsDollars > 1 {
+        let deadlineCount = result.breakdown.deadlinePressure.count
+        let waitableCount = result.breakdown.bestNFailures.count
+
+        // Only flag imports that genuinely could have waited (not deadline fills)
+        if waitableCount > 0 && result.potentialSavingsDollars > 1 {
+            let avgOverpaid = result.breakdown.bestNFailures.overpaidCents / Double(max(1, waitableCount))
+            let contextNote = deadlineCount > 0
+                ? " (\(deadlineCount) other imports were necessary deadline fills)"
+                : ""
             items.append(ActionItem(
                 source: .bargainHunter,
                 category: .importTiming,
                 title: "Improve import timing",
-                description: "Found \(result.breakdown.bestNFailures.count) imports that could have waited for cheaper prices. Avg overpaid: \(String(format: "%.1f", result.breakdown.bestNFailures.overpaidCents / Double(max(1, result.breakdown.bestNFailures.count))))¢/kWh",
+                description: "\(waitableCount) imports could have waited for cheaper prices (avg overpaid \(String(format: "%.1f", avgOverpaid))¢/kWh).\(contextNote)",
                 potentialImpact: result.potentialSavingsDollars * 4,  // Scale weekly to monthly
                 confidence: 0.8,
                 priority: result.potentialSavingsDollars > 5 ? .high : .medium,
-                conflictsWith: [.batteryReserve]  // Waiting conflicts with keeping reserve
+                conflictsWith: [.batteryReserve]
             ))
         }
 
-        // Deadline pressure recommendation
-        if result.breakdown.deadlinePressure.count > result.totalImports / 4 {
+        // Deadline pressure — only flag if it's a very large proportion
+        if deadlineCount > result.totalImports / 2 {
             items.append(ActionItem(
                 source: .bargainHunter,
                 category: .batteryReserve,
                 title: "Start charging earlier",
-                description: "\(result.breakdown.deadlinePressure.count) imports were due to deadline pressure. Consider raising overnight floor or starting charge earlier.",
-                potentialImpact: result.breakdown.deadlinePressure.totalCostCents / 100 * 0.3,  // Could save ~30%
-                confidence: 0.6,
-                priority: .medium,
+                description: "\(deadlineCount) of \(result.totalImports) imports (\(deadlineCount * 100 / max(1, result.totalImports))%) were urgent deadline fills. The system may benefit from starting charge earlier or raising the overnight floor.",
+                potentialImpact: result.breakdown.deadlinePressure.totalCostCents / 100 * 0.15,  // Conservative ~15% savings
+                confidence: 0.5,
+                priority: .low,
                 conflictsWith: []
             ))
         }
@@ -277,7 +284,7 @@ class ActionItemsEngine: ObservableObject {
         // Check cache first
         if let cached = peerPowerAnalysis.result,
            Date().timeIntervalSince(cached.analysisDate) < cacheValiditySeconds {
-            return convertPeerPowerToItems(cached)
+            return convertPeerPowerToItems(cached, batteryCapacityKwh: config.batteryCapacityKWh)
         }
 
         // Run analysis
@@ -288,42 +295,49 @@ class ActionItemsEngine: ObservableObject {
             return nil
         }
 
-        return convertPeerPowerToItems(result)
+        return convertPeerPowerToItems(result, batteryCapacityKwh: config.batteryCapacityKWh)
     }
 
-    private func convertPeerPowerToItems(_ result: PeerPowerResult) -> [ActionItem] {
-        var items: [ActionItem] = []
+    private func convertPeerPowerToItems(_ result: PeerPowerResult, batteryCapacityKwh: Double) -> [ActionItem] {
+        // Consolidate P2P into a single item — price + window together
+        guard result.maxOpportunityDollars > 5 else { return [] }
 
-        // P2P pricing recommendation
-        if result.maxOpportunityDollars > 5 {
-            items.append(ActionItem(
-                source: .peerPower,
-                category: .p2pPricing,
-                title: "Set P2P price to \(String(format: "%.0f", result.recommendedPrice))¢",
-                description: "Win-win rate: \(String(format: "%.0f", result.winWinPercent))%. Potential extra: $\(String(format: "%.0f", result.maxOpportunityDollars))/mo above spot.",
-                potentialImpact: result.maxOpportunityDollars,
-                confidence: result.winWinPercent / 100,
-                priority: result.maxOpportunityDollars > 20 ? .high : .medium,
-                conflictsWith: [.exportFloor]  // P2P price affects export floor
-            ))
-        }
-
-        // P2P window recommendation
         let rec = result.recommendation
+        let windowStr: String
         if rec.dailyKwh > 5 {
-            items.append(ActionItem(
-                source: .peerPower,
-                category: .p2pWindow,
-                title: "P2P window: \(rec.startHour > 12 ? rec.startHour - 12 : rec.startHour)\(rec.startHour >= 12 ? "PM" : "AM")-\(rec.endHour > 12 ? rec.endHour - 12 : rec.endHour)\(rec.endHour >= 12 ? "PM" : "AM")",
-                description: "Best P2P window based on spread analysis. Avg \(String(format: "%.1f", rec.dailyKwh)) kWh/day available.",
-                potentialImpact: rec.monthlyExtraRevenue,
-                confidence: 0.7,
-                priority: .medium,
-                conflictsWith: []
-            ))
+            let startHr = rec.startHour > 12 ? rec.startHour - 12 : rec.startHour
+            let startAP = rec.startHour >= 12 ? "PM" : "AM"
+            let endHr = rec.endHour > 12 ? rec.endHour - 12 : rec.endHour
+            let endAP = rec.endHour >= 12 ? "PM" : "AM"
+            windowStr = " (\(startHr)\(startAP)-\(endHr)\(endAP), ~\(String(format: "%.0f", rec.dailyKwh)) kWh/day)"
+        } else {
+            windowStr = ""
         }
 
-        return items
+        // System size gating: adjust priority and description based on battery capacity
+        let priority: ActionPriority
+        let sizeNote: String
+        if batteryCapacityKwh >= 40 {
+            priority = .medium
+            sizeNote = ""
+        } else if batteryCapacityKwh >= 15 {
+            priority = .low
+            sizeNote = " Note: With \(Int(batteryCapacityKwh)) kWh battery, P2P returns will be moderate."
+        } else {
+            priority = .low
+            sizeNote = " Note: With \(Int(batteryCapacityKwh)) kWh battery, P2P returns may only be modest. Factor in battery cycling costs."
+        }
+
+        return [ActionItem(
+            source: .peerPower,
+            category: .p2pPricing,
+            title: "P2P at \(String(format: "%.0f", result.recommendedPrice))¢\(windowStr)",
+            description: "Sell directly to buyers at a price that beats spot for you and grid for them. Win-win rate: \(String(format: "%.0f", result.winWinPercent))%. Extra revenue above spot: ~$\(String(format: "%.0f", result.maxOpportunityDollars))/mo.\(sizeNote)",
+            potentialImpact: result.maxOpportunityDollars,
+            confidence: result.winWinPercent / 100,
+            priority: priority,
+            conflictsWith: []
+        )]
     }
 
     // MARK: - Conflict Resolution
@@ -391,9 +405,11 @@ class ActionItemsEngine: ObservableObject {
         let bestImport = importItems.map { $0.potentialImpact }.max() ?? 0
         let bestP2P = p2pItems.map { $0.potentialImpact }.max() ?? 0
 
-        // Export and Import are independent optimizations
-        // P2P is additive (you can do P2P on top of good export timing)
-        return bestExport + bestImport + bestP2P
+        // Import is independent of export/P2P
+        // P2P partially or fully replaces export opportunity — same energy, different channel
+        // Take the max of (export, P2P) rather than summing, since they address the same kWh
+        let bestExportOrP2P = max(bestExport, bestP2P)
+        return bestExportOrP2P + bestImport
     }
 
     /// Detailed breakdown for display
@@ -406,12 +422,19 @@ class ActionItemsEngine: ObservableObject {
         let importItems = items.filter { importCategories.contains($0.category) }
         let p2pItems = items.filter { p2pCategories.contains($0.category) }
 
+        let bestExport = exportItems.max(by: { $0.potentialImpact < $1.potentialImpact })
+        let bestP2P = p2pItems.max(by: { $0.potentialImpact < $1.potentialImpact })
+
+        // P2P replaces export opportunity (same energy, different channel).
+        // Show whichever is higher as the export/revenue strategy.
+        let p2pReplacesExport = (bestP2P?.potentialImpact ?? 0) > (bestExport?.potentialImpact ?? 0)
+
         return ImpactBreakdown(
-            bestExportStrategy: exportItems.max(by: { $0.potentialImpact < $1.potentialImpact }),
+            bestExportStrategy: p2pReplacesExport ? nil : bestExport,
             bestImportStrategy: importItems.max(by: { $0.potentialImpact < $1.potentialImpact }),
-            p2pOpportunity: p2pItems.max(by: { $0.potentialImpact < $1.potentialImpact }),
-            exportAlternatives: exportItems.count - 1,
-            importAlternatives: importItems.count - 1
+            p2pOpportunity: bestP2P,
+            exportAlternatives: p2pReplacesExport ? exportItems.count : max(0, exportItems.count - 1),
+            importAlternatives: max(0, importItems.count - 1)
         )
     }
 

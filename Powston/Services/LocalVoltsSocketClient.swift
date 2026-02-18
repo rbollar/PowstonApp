@@ -71,7 +71,9 @@ class LocalVoltsSocketClient {
 
             func sendIdentityIfReady() {
                 if readyReceived && wsUpgradeComplete {
-                    self.sendIdentityRequest()
+                    Task { @MainActor in
+                        self.sendIdentityRequest()
+                    }
                 }
             }
 
@@ -648,9 +650,9 @@ class LocalVoltsSocketClient {
         for item in firstResult {
             guard let orderDict = item as? [String: Any] else { continue }
 
-            // Log first 3 orders for debugging volume issues
-            if debugCount < 3 {
-                print("📋 TradeList order \(debugCount + 1): orderId=\(orderDict["orderId"] ?? "?"), direction=\(orderDict["direction"] ?? "?"), volume=\(orderDict["volume"] ?? "?"), price=\(orderDict["price"] ?? "?")")
+            // Log first 5 orders for debugging (includes dateFrom/dateTo for short contract support)
+            if debugCount < 5 {
+                print("📋 TradeList order \(debugCount + 1): orderId=\(orderDict["orderId"] ?? "?"), direction=\(orderDict["direction"] ?? "?"), volume=\(orderDict["volume"] ?? "?"), price=\(orderDict["price"] ?? "?"), dateFrom=\(orderDict["dateFrom"] ?? "?"), dateTo=\(orderDict["dateTo"] ?? "?")")
                 debugCount += 1
             }
 
@@ -691,3 +693,4 @@ class LocalVoltsSocketClient {
         }
     }
 }
+

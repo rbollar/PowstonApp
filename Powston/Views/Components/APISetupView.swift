@@ -237,7 +237,7 @@ struct APISetupView: View {
                         }
                         dismiss()
                     }
-                    .disabled(api.selectedInverterId == 0 && !api.isDemoMode)
+                    .disabled(!api.isDemoMode && api.selectedInverterId == 0 && api.persistedSiteId == 0)
                     .fontWeight(.semibold)
                 }
             }
@@ -291,12 +291,7 @@ struct APISetupView: View {
         connectionStatus = .fetchingInverters
         await api.fetchAllInverters(forceAll: true)
         
-        if api.inverters.isEmpty {
-            connectionStatus = .error("No inverters found for any site")
-            return
-        }
-        
-        // Select first site that has inverters
+        // Select first site that has inverters, or first site if none have inverters
         if let firstSiteWithInverters = api.sites.first(where: { site in
             api.inverters.contains { $0.siteId == site.id }
         }) {
@@ -304,21 +299,25 @@ struct APISetupView: View {
         } else {
             selectedSiteId = api.sites.first?.id
         }
-        
+
         // Auto-select inverter if only one total, or first from selected site
         if api.inverters.count == 1 {
             api.selectedInverterId = api.inverters[0].id
         } else if let siteId = selectedSiteId,
                   let firstInverter = api.inverters.first(where: { $0.siteId == siteId }) {
             api.selectedInverterId = firstInverter.id
+        } else if api.inverters.isEmpty, let siteId = selectedSiteId {
+            // All sites are zero-inverter — set site directly
+            api.selectedInverterId = 0
+            api.persistedSiteId = siteId
         }
-        
+
         connectionStatus = .success(siteCount: api.sites.count, inverterCount: api.inverters.count)
-        
+
         // Fetch data to detect lead inverter, then switch to it
         if api.selectedInverterId != 0 {
             await api.fetchData()
-            
+
             // After fetch, check if we detected a lead inverter and switch to it
             if let siteId = selectedSiteId,
                let lead = api.leadInverter(forSiteId: siteId),
@@ -327,27 +326,33 @@ struct APISetupView: View {
                 api.selectedInverterId = lead.id
                 await api.fetchData()
             }
-            
+
             // Show dashboard picker on first connection
             if !hasCompletedOnboarding {
                 showDashboardPicker = true
             }
+        } else if !hasCompletedOnboarding {
+            showDashboardPicker = true
         }
     }
     
     func selectSite(_ site: Site) async {
         let siteInverters = api.inverters.filter { $0.siteId == site.id }
-        
+
         if siteInverters.isEmpty {
-            connectionStatus = .error("No inverters found for this site")
+            // Zero-inverter site — set site directly, clear inverter selection
+            api.persistedSiteId = site.id
+            api.selectedInverterId = 0
+            api.data = nil
+            connectionStatus = .success(siteCount: api.sites.count, inverterCount: 0)
             return
         }
-        
+
         // Select first inverter to fetch data and detect lead
         if let first = siteInverters.first {
             api.selectedInverterId = first.id
             await api.fetchData()
-            
+
             // After fetch, check if we detected a different lead inverter
             if let lead = api.leadInverter(forSiteId: site.id),
                lead.id != api.selectedInverterId {
@@ -356,8 +361,8 @@ struct APISetupView: View {
                 await api.fetchData()
             }
         }
-        
-        connectionStatus = .success(siteCount: api.sites.count, inverterCount: api.inverters.count)
+
+        connectionStatus = .success(siteCount: api.sites.count, inverterCount: siteInverters.count)
     }
 }
 

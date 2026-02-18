@@ -138,12 +138,17 @@ Toggle `demo_mode_enabled` in Settings for testing without API calls.
 
 ### LocalVolts Integration
 - **No CSV export**: LocalVolts does not provide CSV export of any kind
-- **No historical API**: Trade information is NOT available through their API
+- **No historical API**: Trade information is NOT available through their API (new API version with trade features coming soon - Joe Maisano, Feb 2026)
 - **WebSocket only returns today**: The Socket.IO identity response only contains current day's P2P trades
 - **Historical data**: Only available through the web portal (would require screen scraping)
 - **Date convention**: LocalVolts WebSocket APIs return actual trading dates, NOT settlement dates (T+1). Use dates as-is without adjustment. This applies to both Identity response (QtyReport) and ContractTable.
 - **Timezone**: Always AEST (Australia/Brisbane, UTC+10) - same as AEMO
 - **Protocol**: Socket.IO v2 (EIO=3) with `suffix=` query parameter required for identification
+- **Matching priority** (confirmed by Joe Maisano): 1) Buyer preferences, 2) Price at buyer's location, 3) Trade placement time. NO pro-rata matching.
+- **No penalties** for missing trades — settlement is on actual meter data, not contracted amounts. Forward amounts adjusted as new forecasts arrive.
+- **Location pricing**: Individual price calculated per site based on grid location (load, generation capacity in area), not just distance.
+- **Trade booking**: Can book up until the start of the interval (e.g. at 15:22 for the 15:25 interval).
+- **Cross-state**: Trades can match across state borders with adjusted pricing, but won't settle if interconnector is constrained in trade direction at settlement time.
 
 ### Timezone Handling
 - Use `Australia/Sydney` for NSW users, `Australia/Brisbane` for QLD
@@ -161,7 +166,8 @@ Toggle `demo_mode_enabled` in Settings for testing without API calls.
 - Location: Sunshine Coast, Queensland
 
 ## Key Insights
-- **P2P price wars are counterproductive**: All sellers within a buyer's price range get equal allocation — community coordination beats undercutting
+- **P2P matching is price-competitive**: Matching priority is buyer preferences → price at buyer location → trade placement time. Price matters — there is NO equal/pro-rata allocation (confirmed by Joe Maisano, LV owner, Feb 2026)
+- **No penalty for missing P2P trades**: Settlement is on actual meter data. You can never buy more than you need or sell more than you generate. Forward amounts auto-adjust with new forecasts.
 - **100% charge remains optimal** in current price environment despite occasional losing trades
 - Battery management script uses 15-level priority system (P100 emergency drain → P1 default auto)
 

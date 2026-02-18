@@ -12,6 +12,7 @@ struct SettingsView: View {
     @AppStorage("dashboard_style") private var dashboardStyle: DashboardStyle = .sections
     @AppStorage("use_system_timezone") private var useSystemTimezone: Bool = true
     @AppStorage("use_dev_server") private var useDevServer: Bool = false
+    @AppStorage("show_experimental_features") private var showExperimentalFeatures: Bool = false
     @AppStorage("single_site_mode") private var singleSiteMode: Bool = false
     
     // Price alerts (for summary badge)
@@ -68,7 +69,7 @@ struct SettingsView: View {
                             Spacer()
                             Button("Configure API") { showingApiSetup = true }.font(.subheadline)
                         }
-                    } else if api.data != nil {
+                    } else if api.data != nil || (api.selectedSite != nil && !api.apiKey.isEmpty) {
                         HStack {
                             Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
                             VStack(alignment: .leading, spacing: 2) {
@@ -369,6 +370,16 @@ struct SettingsView: View {
                                 api.clearMeterRecordsCache()
                             }
                             .listRowBackground(Color.orange.opacity(0.1))
+
+                            Toggle(isOn: $showExperimentalFeatures) {
+                                VStack(alignment: .leading) {
+                                    Text("Experimental Features")
+                                    Text("Show features not yet ready for public release")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .listRowBackground(Color.purple.opacity(0.1))
                         }
                     }
                 }

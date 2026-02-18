@@ -116,6 +116,10 @@ enum ActionCategory: String, Codable, CaseIterable {
         case .priceResponse: return "bolt.circle"
         }
     }
+
+    var isP2P: Bool {
+        self == .p2pPricing || self == .p2pWindow
+    }
 }
 
 // MARK: - ActionPriority
@@ -171,19 +175,29 @@ struct ActionItemsResult: Codable {
         Dictionary(grouping: items) { $0.priority }
     }
 
-    /// High priority items
+    /// Non-P2P items only
+    var coreItems: [ActionItem] {
+        items.filter { !$0.category.isP2P }
+    }
+
+    /// P2P items only
+    var p2pItems: [ActionItem] {
+        items.filter { $0.category.isP2P }
+    }
+
+    /// High priority items (excluding P2P)
     var highPriority: [ActionItem] {
-        items.filter { $0.priority == .high }
+        coreItems.filter { $0.priority == .high }
     }
 
-    /// Medium priority items
+    /// Medium priority items (excluding P2P)
     var mediumPriority: [ActionItem] {
-        items.filter { $0.priority == .medium }
+        coreItems.filter { $0.priority == .medium }
     }
 
-    /// Low priority items
+    /// Low priority items (excluding P2P)
     var lowPriority: [ActionItem] {
-        items.filter { $0.priority == .low }
+        coreItems.filter { $0.priority == .low }
     }
 }
 

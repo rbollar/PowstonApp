@@ -70,10 +70,7 @@
 		1D89DE022F30B00000351F8D /* PowstonAPI+ControllerHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D89DD022F30B00000351F8D /* PowstonAPI+ControllerHealth.swift */; };
 		1D89DE032F30B00000351F8D /* PowstonAPI+DayRates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D89DD032F30B00000351F8D /* PowstonAPI+DayRates.swift */; };
 		1D89DE102F30B00000351F8D /* ActionRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D89DD102F30B00000351F8D /* ActionRecord.swift */; };
-		1D89DE112F30B00000351F8D /* FlowpowerConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D89DD112F30B00000351F8D /* FlowpowerConfig.swift */; };
-		1D89DE122F30B00000351F8D /* RetailerComparisonResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D89DD122F30B00000351F8D /* RetailerComparisonResult.swift */; };
 		1D89DE202F30B00000351F8D /* RetailerComparisonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D89DD202F30B00000351F8D /* RetailerComparisonView.swift */; };
-		1D89DE212F30B00000351F8D /* RetailerComparisonAnalysis.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D89DD212F30B00000351F8D /* RetailerComparisonAnalysis.swift */; };
 		1D9683242F063BC600C46F2C /* LeaderboardCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D9683232F063BC600C46F2C /* LeaderboardCard.swift */; };
 		1D96832A2F06626800C46F2C /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1DE54DCA2F0380EC00EC83B4 /* WidgetKit.framework */; };
 		1D96832B2F06626800C46F2C /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1DE54DCC2F0380EC00EC83B4 /* SwiftUI.framework */; };
@@ -324,10 +321,7 @@
 		1D89DD022F30B00000351F8D /* PowstonAPI+ControllerHealth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PowstonAPI+ControllerHealth.swift"; sourceTree = "<group>"; };
 		1D89DD032F30B00000351F8D /* PowstonAPI+DayRates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PowstonAPI+DayRates.swift"; sourceTree = "<group>"; };
 		1D89DD102F30B00000351F8D /* ActionRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionRecord.swift; sourceTree = "<group>"; };
-		1D89DD112F30B00000351F8D /* FlowpowerConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowpowerConfig.swift; sourceTree = "<group>"; };
-		1D89DD122F30B00000351F8D /* RetailerComparisonResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetailerComparisonResult.swift; sourceTree = "<group>"; };
 		1D89DD202F30B00000351F8D /* RetailerComparisonView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetailerComparisonView.swift; sourceTree = "<group>"; };
-		1D89DD212F30B00000351F8D /* RetailerComparisonAnalysis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetailerComparisonAnalysis.swift; sourceTree = "<group>"; };
 		1D9683232F063BC600C46F2C /* LeaderboardCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeaderboardCard.swift; sourceTree = "<group>"; };
 		1D9683292F06626800C46F2C /* PowstonWatchWidgetsExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PowstonWatchWidgetsExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		1DAB289C2F39CAC500E4847E /* ContractSnapshotHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContractSnapshotHistoryView.swift; sourceTree = "<group>"; };
@@ -655,8 +649,6 @@
 				1D0CD7FC2EFFC9330095A824 /* MeterRecord.swift */,
 				1D0CD7FD2EFFC9330095A824 /* Site.swift */,
 				1D89DD102F30B00000351F8D /* ActionRecord.swift */,
-				1D89DD112F30B00000351F8D /* FlowpowerConfig.swift */,
-				1D89DD122F30B00000351F8D /* RetailerComparisonResult.swift */,
 				50836E037EDFD4E3FBEDFAF9 /* ActionItem.swift */,
 				99034EF4561192A5259A42AF /* AnalysisCacheEntry.swift */,
 				A8964EF34970513CAA1FB3C3 /* CounterpartyType.swift */,
@@ -688,7 +680,6 @@
 				1D89DD012F30B00000351F8D /* SmartRefreshManager.swift */,
 				1D89DD022F30B00000351F8D /* PowstonAPI+ControllerHealth.swift */,
 				1D89DD032F30B00000351F8D /* PowstonAPI+DayRates.swift */,
-				1D89DD212F30B00000351F8D /* RetailerComparisonAnalysis.swift */,
 				2469B8778C775E7839B393EC /* ActionItemsEngine.swift */,
 				6FD92490CDF0F3DDF909E236 /* ActionRecord+GRDB.swift */,
 				0BBD0505FD62A872C3BB67A8 /* ActionRecord+InverterAction.swift */,
@@ -1392,10 +1383,7 @@
 				1D89DE022F30B00000351F8D /* PowstonAPI+ControllerHealth.swift in Sources */,
 				1D89DE032F30B00000351F8D /* PowstonAPI+DayRates.swift in Sources */,
 				1D89DE102F30B00000351F8D /* ActionRecord.swift in Sources */,
-				1D89DE112F30B00000351F8D /* FlowpowerConfig.swift in Sources */,
-				1D89DE122F30B00000351F8D /* RetailerComparisonResult.swift in Sources */,
 				1D89DE202F30B00000351F8D /* RetailerComparisonView.swift in Sources */,
-				1D89DE212F30B00000351F8D /* RetailerComparisonAnalysis.swift in Sources */,
 				1D0CD7F52EFFC9180095A824 /* Item.swift in Sources */,
 				1DE54DBF2F03766500EC83B4 /* SharedConstants.swift in Sources */,
 				1D0CD8262EFFEF330095A824 /* AppDelegate.swift in Sources */,

@@ -259,24 +259,24 @@ struct InverterResponse: Codable {
         return hasData ? total : gridPower
     }
     
-    // Energy balance with corrected grid (should be near zero)
-    // The residual is the homeAdjustment we apply
+    // Energy balance: Solar + Battery - Grid - Home should be ~0
     var energyImbalance: Double {
         let solar = totalSolarPower ?? solarPower ?? 0
         let battery = totalBatteryPower ?? batteryPower ?? 0
+        let grid = totalGridPower ?? gridPower ?? 0
         let house = totalHousePower ?? housePower ?? 0
-        return solar + battery - calculatedGridPower - house
+        return solar + battery - grid - house
     }
-    
+
     var energyImbalanceKw: Double {
         energyImbalance / 1000
     }
-    
+
     // Threshold: 3% of total power throughput (accounts for inverter inefficiency/losses)
     var hasSignificantImbalance: Bool {
         let solar = abs(totalSolarPower ?? solarPower ?? 0)
         let battery = abs(totalBatteryPower ?? batteryPower ?? 0)
-        let grid = abs(calculatedGridPower)
+        let grid = abs(totalGridPower ?? gridPower ?? 0)
         let house = abs(totalHousePower ?? housePower ?? 0)
         let totalPower = solar + battery + grid + house
         let threshold = totalPower * 0.03  // 3%
@@ -293,50 +293,19 @@ struct InverterResponse: Codable {
         runtimeParams?.nestedSerialNumbers ?? []
     }
     
-    // Physics-based grid direction calculation
-    // Energy balance: Solar + Battery - Home = Grid
-    // Pick the sign of reported grid that minimizes imbalance
-    var calculatedGridPower: Double {
-        let solar = totalSolarPower ?? solarPower ?? 0
-        let battery = totalBatteryPower ?? batteryPower ?? 0
-        let house = totalHousePower ?? housePower ?? 0
-        let reportedGrid = totalGridPower ?? gridPower ?? 0
-        
-        let expectedGrid = solar + battery - house
-        let reportedGridAbs = abs(reportedGrid)
-        let positiveError = abs(expectedGrid - reportedGridAbs)
-        let negativeError = abs(expectedGrid - (-reportedGridAbs))
-        
-        return positiveError <= negativeError ? reportedGridAbs : -reportedGridAbs
-    }
-    
+    // Grid direction from API's signed grid_power value
+    // positive = export, negative = import
     var isGridExporting: Bool {
-        calculatedGridPower > 0  // positive = export, negative = import
+        (totalGridPower ?? gridPower ?? 0) > 0
     }
-    
-    var homeAdjustment: Double {
-        let solar = totalSolarPower ?? solarPower ?? 0
-        let battery = totalBatteryPower ?? batteryPower ?? 0
-        let house = totalHousePower ?? housePower ?? 0
-        let expectedGrid = solar + battery - house
-        return calculatedGridPower - expectedGrid
-    }
-    
-    var adjustedHousePower: Double {
-        (totalHousePower ?? housePower ?? 0) + homeAdjustment
-    }
-    
+
     var solarKw: Double { (totalSolarPower ?? solarPower ?? 0) / 1000 }
-    var gridKw: Double { calculatedGridPower / 1000 }
+    var gridKw: Double { (totalGridPower ?? gridPower ?? 0) / 1000 }
     var houseKw: Double { (totalHousePower ?? housePower ?? 0) / 1000 }
     var batteryKw: Double { (totalBatteryPower ?? batteryPower ?? 0) / 1000 }
+    var displayHouseKw: Double { houseKw }
     var isCharging: Bool { (totalBatteryPower ?? batteryPower ?? 0) < 0 }
     var isDischarging: Bool { (totalBatteryPower ?? batteryPower ?? 0) > 0 }
-    
-    // Display house power: adjusted for physics-based grid correction
-    var displayHouseKw: Double {
-        adjustedHousePower / 1000
-    }
     
     // Memberwise init for demo data and testing
     init(

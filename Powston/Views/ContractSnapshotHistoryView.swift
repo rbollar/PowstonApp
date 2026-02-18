@@ -514,7 +514,7 @@ struct ContractSnapshotHistoryView: View {
     private func formatDateRange(from: Date, to: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d"
-        formatter.timeZone = TimeZone(identifier: "Australia/Brisbane")
+        formatter.timeZone = powstonTimezone()
         return "\(formatter.string(from: from)) – \(formatter.string(from: to))"
     }
 
@@ -527,7 +527,7 @@ struct ContractSnapshotHistoryView: View {
     private func formatDateTime(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d, h:mm a"
-        formatter.timeZone = TimeZone(identifier: "Australia/Brisbane")
+        formatter.timeZone = powstonTimezone()
         return formatter.string(from: date)
     }
 

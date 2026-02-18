@@ -140,7 +140,7 @@ struct P2PCounterpartyTradeHistory: Identifiable {
         guard let start = importStart, let end = importEnd else { return nil }
         let formatter = DateFormatter()
         formatter.dateFormat = "d MMM"
-        formatter.timeZone = TimeZone(identifier: "Australia/Brisbane")
+        formatter.timeZone = powstonTimezone()
         if Calendar.current.isDate(start, inSameDayAs: end) {
             return formatter.string(from: start)
         } else {

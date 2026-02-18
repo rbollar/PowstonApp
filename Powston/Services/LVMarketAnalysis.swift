@@ -340,9 +340,12 @@ extension LVMarketAnalysis {
         let hour: Int
         let avgSellPrice: Double
         let avgBuyPrice: Double
+        let vwapSellPrice: Double // Volume-weighted avg (pending contracts), falls back to avg for settled
+        let p10SellPrice: Double  // 10th percentile
         let p25SellPrice: Double  // 25th percentile (low)
         let p50SellPrice: Double  // Median
         let p75SellPrice: Double  // 75th percentile (high)
+        let p90SellPrice: Double  // 90th percentile
         let matchingFee: Double   // Average buy - sell spread
         let contractCount: Int
         let totalVolume: Double   // Total kWh for this hour
@@ -357,6 +360,11 @@ extension LVMarketAnalysis {
         /// For candlestick-style display: low/mid/high
         var priceRange: (low: Double, mid: Double, high: Double) {
             (p25SellPrice, p50SellPrice, p75SellPrice)
+        }
+
+        /// Whether VWAP differs meaningfully from simple average (has volume data)
+        var hasVolumeWeighting: Bool {
+            totalVolume > 0 && abs(vwapSellPrice - avgSellPrice) > 0.1
         }
     }
 
@@ -386,6 +394,14 @@ extension LVMarketAnalysis {
             let avgSell = sellPrices.reduce(0, +) / Double(sellPrices.count)
             let avgBuy = buyPrices.reduce(0, +) / Double(buyPrices.count)
 
+            // VWAP: weight by volume where available (pending contracts), fall back to simple avg
+            let vwapSell: Double
+            if totalVol > 0 {
+                vwapSell = contracts.reduce(0) { $0 + $1.sellPriceCents * $1.volumeKwh } / totalVol
+            } else {
+                vwapSell = avgSell
+            }
+
             // Percentiles
             func percentile(_ prices: [Double], _ p: Double) -> Double {
                 guard !prices.isEmpty else { return 0 }
@@ -397,9 +413,12 @@ extension LVMarketAnalysis {
                 hour: hour,
                 avgSellPrice: avgSell,
                 avgBuyPrice: avgBuy,
+                vwapSellPrice: vwapSell,
+                p10SellPrice: percentile(sellPrices, 0.10),
                 p25SellPrice: percentile(sellPrices, 0.25),
                 p50SellPrice: percentile(sellPrices, 0.50),
                 p75SellPrice: percentile(sellPrices, 0.75),
+                p90SellPrice: percentile(sellPrices, 0.90),
                 matchingFee: avgBuy - avgSell,
                 contractCount: contracts.count,
                 totalVolume: totalVol

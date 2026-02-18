@@ -21,6 +21,7 @@ struct LVMarketContract: Codable, Identifiable, FetchableRecord, PersistableReco
     static let databaseTableName = "lv_market_contracts"
 
     var id: UUID
+    var tradeId: Int?             // LocalVolts native trade ID
     var buyer: String
     var seller: String
     var buyerFacility: String?
@@ -33,9 +34,12 @@ struct LVMarketContract: Codable, Identifiable, FetchableRecord, PersistableReco
     var tradeDate: Date           // Actual trading date
     var fetchedAt: Date
     var category: String?         // SR (Solar Retailer), SC (Solar Consumer), etc.
+    var basis: Int?               // Contract basis (interval type)
+    var updatedAt: String?        // LV's updated timestamp — tracks settlement progression
 
     enum CodingKeys: String, CodingKey {
         case id
+        case tradeId = "trade_id"
         case buyer
         case seller
         case buyerFacility = "buyer_facility"
@@ -48,6 +52,8 @@ struct LVMarketContract: Codable, Identifiable, FetchableRecord, PersistableReco
         case tradeDate = "trade_date"
         case fetchedAt = "fetched_at"
         case category
+        case basis
+        case updatedAt = "updated_at"
     }
 
     // MARK: - Computed Properties
@@ -94,7 +100,7 @@ struct LVMarketContract: Codable, Identifiable, FetchableRecord, PersistableReco
     var periodTimeString: String {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
-        formatter.timeZone = TimeZone(identifier: "Australia/Brisbane")
+        formatter.timeZone = powstonTimezone()
         return formatter.string(from: periodTime)
     }
 }
@@ -144,12 +150,23 @@ extension LVMarketContract {
         // Category: SR (Solar Retailer), SC (Solar Consumer), etc.
         let category = dict["category"] as? String
 
-        // Create deterministic ID from unique contract identifiers
-        // This allows upsert instead of delete-all + insert-all
-        let deterministicId = createDeterministicId(buyer: buyer, seller: seller, period: period, tradeDate: tradeDate)
+        // Native LV fields for tracking
+        let tradeId = dict["tradeId"] as? Int
+        let basis = dict["basis"] as? Int
+        let updatedAt = dict["updated"] as? String
+
+        // Create deterministic ID — prefer tradeId|period (matches collector PK)
+        // Fall back to buyer|seller|period|date when tradeId not available
+        let deterministicId: UUID
+        if let tradeId = tradeId {
+            deterministicId = createDeterministicId(tradeId: tradeId, period: period)
+        } else {
+            deterministicId = createDeterministicId(buyer: buyer, seller: seller, period: period, tradeDate: tradeDate)
+        }
 
         return LVMarketContract(
             id: deterministicId,
+            tradeId: tradeId,
             buyer: buyer,
             seller: seller,
             buyerFacility: dict["buyFacility"] as? String ?? dict["buyerFacility"] as? String ?? dict["buyer_facility"] as? String,
@@ -161,7 +178,9 @@ extension LVMarketContract {
             period: period,
             tradeDate: tradeDate,
             fetchedAt: fetchedAt,
-            category: category
+            category: category,
+            basis: basis,
+            updatedAt: updatedAt
         )
     }
 
@@ -198,30 +217,34 @@ extension LVMarketContract {
         return nil
     }
 
-    /// Create a deterministic UUID from contract identifiers
-    /// This ensures the same contract always gets the same ID, enabling upsert
+    /// Create a deterministic UUID from tradeId + period (preferred — matches collector PK)
+    private static func createDeterministicId(tradeId: Int, period: Int) -> UUID {
+        let idString = "tid:\(tradeId)|\(period)"
+        return hashToUUID(idString)
+    }
+
+    /// Create a deterministic UUID from contract identifiers (fallback when tradeId unavailable)
     private static func createDeterministicId(buyer: String, seller: String, period: Int, tradeDate: Date) -> UUID {
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyyMMdd"
         dateFormatter.timeZone = TimeZone(identifier: "Australia/Brisbane")
         let dateStr = dateFormatter.string(from: tradeDate)
-
-        // Create a unique string from the contract identifiers
         let idString = "\(buyer)|\(seller)|\(period)|\(dateStr)"
+        return hashToUUID(idString)
+    }
 
-        // Use SHA256-like approach: create a stable hash and format as UUID
+    /// Convert a string to a deterministic UUID using dual-hash approach
+    private static func hashToUUID(_ idString: String) -> UUID {
         var hash: UInt64 = 5381
         for char in idString.utf8 {
             hash = ((hash << 5) &+ hash) &+ UInt64(char)
         }
 
-        // Create a second hash for more bits
         var hash2: UInt64 = 0
         for char in idString.utf8.reversed() {
             hash2 = ((hash2 << 5) &+ hash2) &+ UInt64(char)
         }
 
-        // Format as UUID string (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
         let hex1 = String(format: "%08x", UInt32(truncatingIfNeeded: hash))
         let hex2 = String(format: "%04x", UInt16(truncatingIfNeeded: hash >> 32))
         let hex3 = String(format: "%04x", UInt16(truncatingIfNeeded: hash >> 48))

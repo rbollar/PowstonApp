@@ -221,6 +221,47 @@ struct DashboardView: View {
                 } else if api.isLoading {
                     ProgressView("Loading...")
                         .padding(.top, 100)
+                } else if api.selectedInverterId == 0 && api.selectedSite != nil && !api.apiKey.isEmpty {
+                    // Zero-inverter site (e.g. hydro) — show reduced dashboard
+                    VStack(spacing: 24) {
+                        // Info banner with generation-aware messaging
+                        HStack {
+                            if let site = api.selectedSite {
+                                Image(systemName: site.generationIcon)
+                                    .foregroundColor(site.generationColor)
+                                Text("\(site.generationTypeLabel) — live data not available")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            } else {
+                                Image(systemName: "info.circle.fill")
+                                    .foregroundColor(.blue)
+                                Text("Live data not available")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding()
+                        .background((api.selectedSite?.generationColor ?? .blue).opacity(0.1))
+                        .cornerRadius(12)
+                        .padding(.horizontal)
+
+                        // P&L card
+                        TodayPLCard()
+                            .padding(.horizontal)
+
+                        // Weather widget
+                        if let site = api.selectedSite,
+                           let lat = site.latitude,
+                           let lon = site.longitude {
+                            WeatherWidget(latitude: lat, longitude: lon)
+                                .padding(.horizontal)
+                        }
+
+                        // Leaderboard card
+                        LeaderboardCard()
+                            .padding(.horizontal)
+                    }
+                    .padding(.bottom, 20)
                 } else if api.selectedInverterId == 0 {
                     WelcomeView()
                 } else if let err = api.error {
@@ -327,9 +368,20 @@ struct DashboardView: View {
         return .red
     }
     
+    /// Normalized action category for color/icon matching
+    private func actionCategory(_ action: String) -> String {
+        let lower = action.lowercased()
+        if lower.contains("curtail") { return "curtail" }
+        if lower.contains("export") || lower.contains("trickle") || lower == "p2p exp" { return "export" }
+        if lower.contains("import") || lower == "p2p imp" { return "import" }
+        if lower.contains("charge") { return "charge" }
+        if lower.contains("discharge") { return "discharge" }
+        if lower.contains("auto") || lower.contains("hold") { return "auto" }
+        return lower
+    }
+
     func actionIcon(_ action: String) -> String {
-        let simplified = displayAction(action).lowercased()
-        switch simplified {
+        switch actionCategory(action) {
         case "import": return "arrow.down.circle.fill"
         case "export": return "arrow.up.circle.fill"
         case "charge": return "battery.100.bolt"
@@ -337,10 +389,9 @@ struct DashboardView: View {
         default: return "arrow.triangle.2.circlepath"
         }
     }
-    
+
     func actionColor(_ action: String) -> Color {
-        let simplified = displayAction(action).lowercased()
-        switch simplified {
+        switch actionCategory(action) {
         case "import": return .blue
         case "export": return .green
         case "charge": return .yellow
@@ -348,7 +399,7 @@ struct DashboardView: View {
         default: return .gray
         }
     }
-    
+
     func badgeColor(for action: String) -> Color {
         if api.hasActiveOverride {
             return .orange
@@ -358,12 +409,13 @@ struct DashboardView: View {
             return actionColor(action)
         }
     }
-    
-    func displayAction(_ action: String) -> String {
+
+    func displayAction(_ action: String, gridKw: Double? = nil) -> String {
         let lower = action.lowercased()
         if lower.contains("curtail") {
             return "Curtail"
         } else if lower.contains("export") {
+            // Without optimal_discharging, just show "Export" for historical chart overlays
             return "Export"
         } else if lower.contains("import") {
             return "Import"
@@ -1280,7 +1332,7 @@ struct ActionBadgeView: View {
         default: return action.lowercased()
         }
     }
-    
+
     /// Short action name for transition display
     private func shortAction(_ action: String?) -> String {
         guard let action = action?.lowercased() else { return "?" }
@@ -1291,11 +1343,11 @@ struct ActionBadgeView: View {
         default: return action.capitalized
         }
     }
-    
+
     var badgeColor: Color {
         if api.hasActiveOverride { return .orange }
         if api.hasPendingOverride || api.hasScheduledOverride { return .blue }
-        
+
         switch displayedAction {
         case "charge", "import": return .green
         case "discharge", "export": return .orange
@@ -1303,12 +1355,12 @@ struct ActionBadgeView: View {
         default: return .secondary
         }
     }
-    
+
     var iconName: String {
         if api.hasPendingOverride { return "hourglass" }
         if api.hasActiveOverride { return "exclamationmark.triangle.fill" }
         if api.hasScheduledOverride { return "clock.fill" }
-        
+
         switch displayedAction {
         case "charge": return "battery.100.bolt"
         case "discharge": return "battery.50"
@@ -1318,17 +1370,34 @@ struct ActionBadgeView: View {
         default: return "bolt.fill"
         }
     }
-    
+
     func displayAction(_ action: String?) -> String {
         guard let action = action else { return "Unknown" }
         switch action.lowercased() {
         case "charge": return "Charge"
-        case "discharge": return "Discharge"
-        case "export": return "Export"
+        case "discharge", "export": return exportLabel
         case "import": return "Import"
         case "auto": return "Auto"
         default: return action.capitalized
         }
+    }
+
+    /// Use real-time grid power vs inverter rated power to distinguish export types
+    /// No optimal_discharging in real-time data, so grid power is the best proxy
+    private var exportLabel: String {
+        let gk = api.data?.gridKw ?? 0  // positive = exporting
+        guard gk > 0 else { return "Export" }
+
+        // Sum rated power across all site inverters (kW)
+        let siteInverters = api.inverters.filter { $0.siteId == api.selectedSiteId }
+        let totalRatedKw = siteInverters.isEmpty ? 0 :
+            Double(siteInverters.map { $0.dischargeCapacityWatts }.reduce(0, +)) / 1000.0
+
+        // If exporting well below rated capacity, it's throttled for P2P
+        if totalRatedKw > 0 && gk < totalRatedKw * 0.8 {
+            return gk <= 1.0 ? "Trickle" : "P2P Exp"
+        }
+        return "Export"
     }
     
     /// The text to show for the action state

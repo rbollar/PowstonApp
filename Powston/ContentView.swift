@@ -97,6 +97,11 @@ struct ContentView: View {
                     await api.fetchData()
                     // Start smart refresh after initial data load
                     SmartRefreshManager.shared.start(api: api)
+                } else if let siteId = api.selectedSite?.id {
+                    // Zero-inverter site — trigger LocalVolts sync directly
+                    Task.detached { [siteId] in
+                        await LocalVoltsService.shared.performDailySyncIfNeeded(siteId: siteId)
+                    }
                 }
             }
         }

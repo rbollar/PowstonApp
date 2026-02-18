@@ -2,41 +2,25 @@
 //  RetailerComparisonView.swift
 //  Powston
 //
-//  Shows LocalVolts actual costs, Flowpower simulation, and links to Energy Made Easy
+//  Shows LocalVolts actual costs and links to Energy Made Easy
 //
 
 import SwiftUI
 
 struct RetailerComparisonView: View {
     @EnvironmentObject var api: PowstonAPI
-    @StateObject private var analysis = RetailerComparisonAnalysis()
 
-    @State private var showingReport = false
-    @State private var selectedRegion: NetworkRegion = .nswEndeavour
-    @State private var showingLocalVoltsSummary = false
     @State private var localVoltsSummary: LocalVoltsCostSummary?
-
-    var config: AnalysisConfig? {
-        guard let site = api.selectedSite else { return nil }
-        return AnalysisConfig.from(site: site)
-    }
-
-    var flowpowerConfig: FlowpowerConfig {
-        FlowpowerConfig.forRegion(selectedRegion)
-    }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
                 headerSection
 
-                // LocalVolts Summary Card (always show if available)
+                // LocalVolts Summary Card
                 if let summary = localVoltsSummary {
                     localVoltsCostCard(summary)
                 }
-
-                // Flowpower Comparison Section
-                flowpowerSection
 
                 // Energy Made Easy Link
                 energyMadeEasyCard
@@ -48,28 +32,8 @@ struct RetailerComparisonView: View {
         }
         .navigationTitle("Retailer Comparison")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            if analysis.result != nil {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        showingReport = true
-                    } label: {
-                        Image(systemName: "doc.text")
-                    }
-                }
-            }
-        }
-        .sheet(isPresented: $showingReport) {
-            if let result = analysis.result {
-                ReportSheet(report: result.formattedReport)
-            }
-        }
         .task {
-            loadInitialData()
             await loadLocalVoltsSummary()
-        }
-        .onChange(of: selectedRegion) { _, _ in
-            analysis.result = nil
         }
     }
 
@@ -178,168 +142,6 @@ struct RetailerComparisonView: View {
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 
-    // MARK: - Flowpower Section
-
-    @ViewBuilder
-    private var flowpowerSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "bolt.horizontal.fill")
-                    .foregroundColor(.orange)
-                Text("Flowpower Simulation")
-                    .font(.headline)
-                Spacer()
-            }
-
-            Text("Simulate what you'd pay on Flowpower's wholesale pass-through tariff")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            // Network picker
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Network Region")
-                    .font(.subheadline.weight(.medium))
-
-                Picker("Network", selection: $selectedRegion) {
-                    ForEach(NetworkRegion.allCases) { region in
-                        Text(region.rawValue).tag(region)
-                    }
-                }
-                .pickerStyle(.menu)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color(.tertiarySystemBackground))
-                .cornerRadius(8)
-
-                Text("Daily: $\(String(format: "%.2f", flowpowerConfig.dailyCharge)) | Base: \(Int(flowpowerConfig.baseImportRate))c/kWh | Export window: \(flowpowerConfig.peakExportWindowDescription)")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-
-            Divider()
-
-            if analysis.isAnalyzing {
-                HStack {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                    Text(analysis.progress)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 20)
-            } else if let result = analysis.result {
-                flowpowerResultSummary(result)
-            } else if let error = analysis.error {
-                VStack(spacing: 8) {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                    Button("Try Again") {
-                        runAnalysis()
-                    }
-                    .font(.caption)
-                }
-            } else {
-                Button {
-                    runAnalysis()
-                } label: {
-                    Label("Analyze 60 Days", systemImage: "play.fill")
-                        .font(.subheadline)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.orange)
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    private func flowpowerResultSummary(_ result: RetailerComparisonResult) -> some View {
-        VStack(spacing: 12) {
-            // Winner announcement
-            HStack {
-                Image(systemName: "trophy.fill")
-                    .foregroundColor(.yellow)
-                Text("\(result.cheaperRetailer.displayName) saves")
-                    .font(.subheadline)
-                Text("$\(String(format: "%.0f", result.annualizedDifference))/year")
-                    .font(.headline)
-                    .foregroundColor(result.cheaperRetailer == .localVolts ? .green : .orange)
-            }
-
-            // Side by side comparison
-            HStack(spacing: 20) {
-                VStack(spacing: 4) {
-                    Text("LocalVolts")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("$\(String(format: "%.0f", result.localVoltsActual.netCost))")
-                        .font(.title3.bold())
-                        .foregroundColor(result.cheaperRetailer == .localVolts ? .green : .primary)
-                    Text("\(result.periodDays) days")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-
-                Image(systemName: "arrow.left.arrow.right")
-                    .foregroundStyle(.secondary)
-
-                VStack(spacing: 4) {
-                    Text("Flowpower")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("$\(String(format: "%.0f", result.flowpowerSimulated.netCost))")
-                        .font(.title3.bold())
-                        .foregroundColor(result.cheaperRetailer == .flowpower ? .green : .primary)
-                    Text("simulated")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-
-            // Key metrics
-            HStack(spacing: 16) {
-                VStack(spacing: 2) {
-                    Text("PEA Grade")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Text(result.flowpowerSimulated.peaDetails.importTimingGrade)
-                        .font(.caption.bold())
-                        .foregroundColor(gradeColor(result.flowpowerSimulated.peaDetails.importTimingGrade))
-                }
-
-                VStack(spacing: 2) {
-                    Text("Export Capture")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    let fp = result.flowpowerSimulated
-                    let total = fp.peakExportKwh + fp.offPeakExportKwh
-                    let capture = total > 0 ? (fp.peakExportKwh / total) * 100 : 0
-                    Text("\(Int(capture))%")
-                        .font(.caption.bold())
-                }
-
-                VStack(spacing: 2) {
-                    Text("Effective Rate")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Text("\(String(format: "%.1f", result.flowpowerSimulated.effectiveImportRate))c")
-                        .font(.caption.bold())
-                }
-            }
-
-            Button {
-                runAnalysis()
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-                    .font(.caption)
-            }
-            .buttonStyle(.bordered)
-        }
-    }
-
     // MARK: - Energy Made Easy Card
 
     private var energyMadeEasyCard: some View {
@@ -429,20 +231,7 @@ struct RetailerComparisonView: View {
         }
     }
 
-    // MARK: - Helpers
-
-    private func loadInitialData() {
-        if let site = api.selectedSite {
-            let detectedRegion = detectNetworkRegion(state: site.state)
-            selectedRegion = detectedRegion
-        }
-
-        if let config = config {
-            if let cached = analysis.getCachedResult(config: config, flowpowerConfig: flowpowerConfig) {
-                analysis.result = cached
-            }
-        }
-    }
+    // MARK: - Data Loading
 
     private func loadLocalVoltsSummary() async {
         guard let siteId = api.selectedSiteId else { return }
@@ -468,7 +257,6 @@ struct RetailerComparisonView: View {
         var totalExportKwh: Double = 0
 
         for record in cachedRecords {
-            // Use same logic as MeterRecord.effectiveImport/effectiveExport
             let importKwh = record.energyImport ?? record.generalKwh ?? 0
             let exportKwh = record.energyExport ?? max(0, record.feedInKwh ?? 0)
 
@@ -516,41 +304,6 @@ struct RetailerComparisonView: View {
             days: days,
             periodDescription: periodDesc
         )
-    }
-
-    private func detectNetworkRegion(state: String?) -> NetworkRegion {
-        guard let state = state?.uppercased() else { return .nswEndeavour }
-
-        switch state {
-        case "QLD", "QUEENSLAND":
-            return .qldEnergex
-        case "VIC", "VICTORIA":
-            return .vicCitipower
-        case "SA", "SOUTH AUSTRALIA":
-            return .saAPD
-        default:
-            return .nswEndeavour
-        }
-    }
-
-    private func runAnalysis() {
-        guard let config = config else { return }
-        Task {
-            await analysis.runAnalysis(
-                api: api,
-                config: config,
-                flowpowerConfig: flowpowerConfig
-            )
-        }
-    }
-
-    private func gradeColor(_ grade: String) -> Color {
-        switch grade {
-        case "A": return .green
-        case "B": return .blue
-        case "C": return .orange
-        default: return .red
-        }
     }
 }
 

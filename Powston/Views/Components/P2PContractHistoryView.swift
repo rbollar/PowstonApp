@@ -253,21 +253,34 @@ struct P2PContractHistoryView: View {
         var active: [LVOrderGroup] = []
         var completed: [LVOrderGroup] = []
 
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = powstonTimezone()
+        let now = Date()
+        let today = calendar.startOfDay(for: now)
 
         for group in filteredLVOrderGroups {
-            let startDay = calendar.startOfDay(for: group.dateFrom)
-            let endDay = calendar.startOfDay(for: group.dateTo)
-
             if group.status == "Cancelled" {
                 completed.append(group)
-            } else if today < startDay {
-                future.append(group)
-            } else if today > endDay {
-                completed.append(group)
+            } else if group.isIntraDay {
+                // Intra-day: compare actual timestamps, not just calendar days
+                if now < group.dateFrom {
+                    future.append(group)
+                } else if now > group.dateTo {
+                    completed.append(group)
+                } else {
+                    active.append(group)
+                }
             } else {
-                active.append(group)
+                // Multi-day: compare by calendar day
+                let startDay = calendar.startOfDay(for: group.dateFrom)
+                let endDay = calendar.startOfDay(for: group.dateTo)
+                if today < startDay {
+                    future.append(group)
+                } else if today > endDay {
+                    completed.append(group)
+                } else {
+                    active.append(group)
+                }
             }
         }
 
@@ -315,20 +328,26 @@ struct P2PContractHistoryView: View {
                 }
             }
 
-            // Date range and hours
+            // Date range, duration, and volume
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(formatDateRange(from: group.dateFrom, to: group.dateTo))
                         .font(.caption)
+                    // Show time window from startHour/endHour (manual) or intraDayTimeWindow (parsed)
                     if let timeWindow = group.timeWindowString {
                         Text(timeWindow)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    } else if !group.isIntraDay {
+                        // Multi-day: show duration
+                        Text(group.durationDescription)
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text(String(format: "%.0f kWh", group.totalVolumeKwh))
+                    Text(String(format: "%.1f kWh", group.totalVolumeKwh))
                         .font(.caption.bold())
                     Text(group.priceRangeString)
                         .font(.caption)
@@ -383,8 +402,8 @@ struct P2PContractHistoryView: View {
                 lvOrderPreCommitmentStatus(group: group, perf: perf)
             }
 
-            // Progress and pace for active groups
-            if state == .active, let dayProgress = group.dayProgress {
+            // Progress and pace for active multi-day groups (not intra-day)
+            if state == .active, !group.isIntraDay, let dayProgress = group.dayProgress {
                 lvOrderPaceIndicator(group: group, perf: perf, dayProgress: dayProgress)
             }
         }
@@ -425,7 +444,7 @@ struct P2PContractHistoryView: View {
                     Text(priceLabel)
                         .font(.caption2.bold())
                         .foregroundColor(tier.priceCents > 0 ? .purple : .blue)
-                        .frame(width: 28, alignment: .leading)
+                        .frame(minWidth: 32, alignment: .leading)
                         .lineLimit(1)
 
                     // Volume - wider frame for 3-digit numbers
@@ -455,13 +474,13 @@ struct P2PContractHistoryView: View {
                         Text(String(format: "%.0f%%", fillRate))
                             .font(.caption2.bold().monospacedDigit())
                             .foregroundColor(lvFillRateColor(fillRate))
-                            .frame(width: 36, alignment: .trailing)
+                            .frame(minWidth: 36, alignment: .trailing)
                             .lineLimit(1)
                     } else {
                         Text("0%")
                             .font(.caption2)
                             .foregroundColor(.secondary)
-                            .frame(width: 36, alignment: .trailing)
+                            .frame(minWidth: 36, alignment: .trailing)
                     }
                 }
             }
@@ -726,9 +745,29 @@ struct P2PContractHistoryView: View {
     }
 
     private func formatDateRange(from: Date, to: Date) -> String {
+        let tz = powstonTimezone()
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = tz
         let formatter = DateFormatter()
+        formatter.timeZone = tz
+
+        if calendar.isDate(from, inSameDayAs: to) {
+            // Same day — show date once, plus time window if available
+            formatter.dateFormat = "MMM d"
+            let dateStr = formatter.string(from: from)
+            if from != to {
+                // Has time components — show time range
+                let timeFormatter = DateFormatter()
+                timeFormatter.timeZone = tz
+                timeFormatter.dateFormat = "h:mma"
+                timeFormatter.amSymbol = "am"
+                timeFormatter.pmSymbol = "pm"
+                return "\(dateStr), \(timeFormatter.string(from: from))–\(timeFormatter.string(from: to))"
+            }
+            return dateStr
+        }
+
         formatter.dateFormat = "MMM d"
-        formatter.timeZone = TimeZone(identifier: "Australia/Brisbane")
         return "\(formatter.string(from: from)) – \(formatter.string(from: to))"
     }
 

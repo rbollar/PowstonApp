@@ -13,31 +13,54 @@ extension PowstonDataStore {
     // MARK: - Schema Creation (called from performMigrations)
 
     // Migration version for market contracts - increment to force data clear
-    private static let marketContractsVersion = 4  // v4: ContractTable uses actual trading date (no T+1 adjustment needed)
+    private static let marketContractsVersion = 5  // v5: Add tradeId, basis, updated_at; settlement progression tracking
 
     func createLVMarketContractsSchema(_ db: Database) throws {
         // Check migration version in UserDefaults
         let currentVersion = UserDefaults.standard.integer(forKey: "lv_market_contracts_schema_version")
 
-        // Check if table exists with old schema (has price_cents instead of sell_price_cents)
+        // Check if table exists
         if try db.tableExists("lv_market_contracts") {
             let columns = try db.columns(in: "lv_market_contracts").map { $0.name }
-            let needsSchemaChange = columns.contains("price_cents") || !columns.contains("sell_price_cents")
-            let needsDataClear = currentVersion < Self.marketContractsVersion
 
-            if needsSchemaChange || needsDataClear {
-                // Clear old data (schema change or ID format change)
-                let reason = needsSchemaChange ? "schema change" : "ID format change to deterministic UUIDs"
-                print("🔄 Migration: Clearing lv_market_contracts (\(reason))")
-                try db.execute(sql: "DELETE FROM lv_market_contracts")
+            // Ancient schema (pre-v3) — needs full recreation
+            let needsFullRecreation = columns.contains("price_cents") || !columns.contains("sell_price_cents")
 
-                if needsSchemaChange {
-                    try db.drop(table: "lv_market_contracts")
-                } else {
-                    // Just data clear, update version and return
-                    UserDefaults.standard.set(Self.marketContractsVersion, forKey: "lv_market_contracts_schema_version")
-                    return
+            if needsFullRecreation {
+                print("🔄 Migration: Dropping lv_market_contracts (ancient schema)")
+                try db.drop(table: "lv_market_contracts")
+                // Fall through to table creation below
+            } else if currentVersion < Self.marketContractsVersion {
+                // v4 → v5: Add new columns non-destructively (keep existing data)
+                if !columns.contains("trade_id") {
+                    try db.execute(sql: "ALTER TABLE lv_market_contracts ADD COLUMN trade_id INTEGER")
+                    print("🔄 Migration: Added trade_id column")
                 }
+                if !columns.contains("basis") {
+                    try db.execute(sql: "ALTER TABLE lv_market_contracts ADD COLUMN basis INTEGER")
+                    print("🔄 Migration: Added basis column")
+                }
+                if !columns.contains("updated_at") {
+                    try db.execute(sql: "ALTER TABLE lv_market_contracts ADD COLUMN updated_at TEXT")
+                    print("🔄 Migration: Added updated_at column")
+                }
+
+                // Add tradeId index if missing
+                let indexExists = try Row.fetchOne(db, sql: """
+                    SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_market_contracts_trade_id'
+                """) != nil
+                if !indexExists {
+                    try db.create(
+                        index: "idx_market_contracts_trade_id",
+                        on: "lv_market_contracts",
+                        columns: ["trade_id", "period"]
+                    )
+                    print("🔄 Migration: Added trade_id index")
+                }
+
+                UserDefaults.standard.set(Self.marketContractsVersion, forKey: "lv_market_contracts_schema_version")
+                print("✅ Migration complete: lv_market_contracts upgraded to v\(Self.marketContractsVersion)")
+                return
             } else {
                 // Schema and data are current
                 return
@@ -48,6 +71,7 @@ extension PowstonDataStore {
 
         try db.create(table: "lv_market_contracts") { t in
             t.column("id", .text).primaryKey()
+            t.column("trade_id", .integer)                   // LocalVolts native trade ID
             t.column("buyer", .text).notNull()
             t.column("seller", .text).notNull()
             t.column("buyer_facility", .text)
@@ -60,6 +84,8 @@ extension PowstonDataStore {
             t.column("trade_date", .datetime).notNull()
             t.column("fetched_at", .datetime).notNull()
             t.column("category", .text)                      // SR, SC, etc.
+            t.column("basis", .integer)                      // Contract basis (interval type)
+            t.column("updated_at", .text)                    // LV's updated timestamp for settlement tracking
         }
 
         // Index for date and region queries
@@ -83,6 +109,13 @@ extension PowstonDataStore {
             columns: ["buyer", "trade_date"]
         )
 
+        // Index for tradeId lookups (settlement tracking)
+        try db.create(
+            index: "idx_market_contracts_trade_id",
+            on: "lv_market_contracts",
+            columns: ["trade_id", "period"]
+        )
+
         // Update schema version
         UserDefaults.standard.set(Self.marketContractsVersion, forKey: "lv_market_contracts_schema_version")
 
@@ -91,36 +124,53 @@ extension PowstonDataStore {
 
     // MARK: - Save Operations
 
-    /// Save market contracts using upsert (insert or replace)
-    /// Contracts have deterministic IDs based on buyer/seller/period/date,
-    /// so duplicates are automatically handled without delete-all
+    /// Save market contracts with settlement progression tracking.
+    /// Detects volume/updated changes between fetches (matching collector pattern).
+    /// Contracts have deterministic IDs based on tradeId|period (or buyer|seller|period|date fallback).
     func saveLVMarketContracts(_ contracts: [LVMarketContract], for date: Date) throws {
         guard let db = dbQueue, !contracts.isEmpty else { return }
 
         var insertCount = 0
         var updateCount = 0
+        var settledCount = 0
+        var dupeCount = 0
 
         try db.write { db in
             for contract in contracts {
                 // Check if exists
-                let exists = try LVMarketContract.fetchOne(db, key: contract.id) != nil
+                if let existing = try LVMarketContract.fetchOne(db, key: contract.id) {
+                    // Detect settlement progression or updates
+                    let volumeChanged = existing.volumeKwh != contract.volumeKwh
+                    let updatedChanged = existing.updatedAt != contract.updatedAt
 
-                // Upsert (insert or replace)
-                try contract.save(db, onConflict: .replace)
+                    if volumeChanged || updatedChanged {
+                        // Settlement progression — volume or updated timestamp changed
+                        try contract.save(db, onConflict: .replace)
+                        updateCount += 1
 
-                if exists {
-                    updateCount += 1
+                        // Track when contracts transition from pending to settled
+                        if existing.volumeKwh > 0 && contract.volumeKwh == 0 {
+                            settledCount += 1
+                        }
+                    } else {
+                        // Exact duplicate — don't touch fetchedAt, just skip
+                        dupeCount += 1
+                    }
                 } else {
+                    // New record
+                    try contract.save(db, onConflict: .replace)
                     insertCount += 1
                 }
             }
         }
 
-        if updateCount > 0 {
-            print("💾 Market contracts: \(insertCount) new, \(updateCount) updated for \(formatDate(date))")
-        } else {
-            print("💾 Saved \(insertCount) market contracts for \(formatDate(date))")
-        }
+        var parts: [String] = []
+        if insertCount > 0 { parts.append("\(insertCount) new") }
+        if updateCount > 0 { parts.append("\(updateCount) updated") }
+        if settledCount > 0 { parts.append("\(settledCount) settled") }
+        if dupeCount > 0 { parts.append("\(dupeCount) dupes") }
+        let summary = parts.isEmpty ? "no changes" : parts.joined(separator: ", ")
+        print("💾 Market contracts for \(formatDate(date)): \(summary) (\(contracts.count) fetched)")
     }
 
     // MARK: - Query Operations

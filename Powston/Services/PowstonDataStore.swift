@@ -1025,7 +1025,7 @@ class PowstonDataStore: ObservableObject {
 
     /// Fetch actions for a specific inverter from cache (private helper)
     private func fetchActionsForInverter(siteId: Int, inverterId: Int, date: Date) -> [ActionRecord] {
-        guard let db = dbQueue else { return [] }
+        guard dbQueue != nil else { return [] }
 
         let calendar = Calendar.current
         let startOfDay = calendar.startOfDay(for: date)

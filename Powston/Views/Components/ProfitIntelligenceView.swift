@@ -14,7 +14,6 @@ struct ProfitIntelligenceView: View {
     @StateObject private var savingsAnalysis = SavingsBreakdownAnalysis()
     @StateObject private var bargainHunterAnalysis = BargainHunterAnalysis()
     @StateObject private var peerPowerAnalysis = PeerPowerAnalysis()
-    @StateObject private var retailerComparisonAnalysis = RetailerComparisonAnalysis()
 
     // Background sync state
     @State private var syncState: AnalysisSyncState = .idle
@@ -641,7 +640,7 @@ struct ProfitIntelligenceView: View {
         return "\(h)\(hour < 12 ? "a" : "p")"
     }
 
-    // MARK: - Retailer Comparison Card (enabled)
+    // MARK: - Retailer Comparison Card
 
     private var retailerComparisonCard: some View {
         NavigationLink(destination: RetailerComparisonView()) {
@@ -657,7 +656,7 @@ struct ProfitIntelligenceView: View {
                             .fontWeight(.medium)
                             .foregroundColor(.primary)
 
-                        Text("Is the grass greener?")
+                        Text("Your costs & Energy Made Easy")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -667,58 +666,6 @@ struct ProfitIntelligenceView: View {
                     Image(systemName: "chevron.right")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                }
-
-                // Teaser if results available
-                if let result = retailerComparisonAnalysis.result {
-                    Text(AnalysisHeadlines.retailerComparison(result: result))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    Divider()
-
-                    HStack(spacing: 16) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(result.cheaperRetailer.displayName)
-                                .font(.subheadline.bold())
-                                .foregroundColor(.teal)
-                            Text("cheaper")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("$\(String(format: "%.2f", result.dailyDifference))")
-                                .font(.subheadline.bold())
-                                .foregroundColor(.green)
-                            Text("per day")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("$\(String(format: "%.0f", result.annualizedDifference))")
-                                .font(.subheadline.bold())
-                                .foregroundColor(.green)
-                            Text("per year")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-
-                        Spacer()
-                    }
-                } else if !api.isDemoMode {
-                    Divider()
-
-                    HStack {
-                        Image(systemName: "play.circle.fill")
-                            .foregroundColor(.teal)
-                        Text("Compare 60 days of retailer costs")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                    }
                 }
             }
             .padding()
@@ -832,25 +779,9 @@ struct ProfitIntelligenceView: View {
                 peerPowerAnalysis.result = cached
             }
 
-            // Load Retailer Comparison cached result (uses default region for cache check)
-            let defaultRegion = detectNetworkRegion(state: api.selectedSite?.state)
-            let flowpowerConfig = FlowpowerConfig.forRegion(defaultRegion)
-            if let cached = retailerComparisonAnalysis.getCachedResult(config: config, flowpowerConfig: flowpowerConfig) {
-                retailerComparisonAnalysis.result = cached
-            }
         }
     }
 
-    private func detectNetworkRegion(state: String?) -> NetworkRegion {
-        guard let state = state?.uppercased() else { return .nswEndeavour }
-        switch state {
-        case "QLD", "QUEENSLAND": return .qldEnergex
-        case "VIC", "VICTORIA": return .vicCitipower
-        case "SA", "SOUTH AUSTRALIA": return .saAPD
-        default: return .nswEndeavour
-        }
-    }
-    
     // MARK: - Helpers
     
     private func gradeColor(_ grade: String) -> Color {

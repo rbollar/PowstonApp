@@ -341,23 +341,30 @@ struct SavingsAnalysisCard: View {
     let networkName: String?
     let importTariff: String?
     let exportTariff: String?
+    var site: Site? = nil
     var p2pCounterparties: [P2PCounterpartyTrade] = []
     var p2pImportDateRange: String? = nil  // e.g., "Jan 20-26" if multi-day import
-    
+
     @State private var showCounterparties = false
-    
+
     private func formatCurrency(_ value: Double) -> String {
         String(format: "$%.2f", abs(value))
     }
-    
-    // Solar: savings (positive) or cost (negative)
+
+    // Generation: savings (positive) or cost (negative) — adapts to solar/wind/hydro/mixed
     private var solarLabel: String {
-        analysis.solarSavings >= 0 ? "Solar savings:" : "Solar cost:"
+        if let site = site {
+            return site.generationLabel(isSavings: analysis.solarSavings >= 0)
+        }
+        return analysis.solarSavings >= 0 ? "Solar savings:" : "Solar cost:"
     }
+
+    private var generationIcon: String { site?.generationIcon ?? "sun.max.fill" }
+    private var generationColor: Color { site?.generationColor ?? .yellow }
     
     // Powston: savings (positive) or cost (negative)
     private var powstonLabel: String {
-        analysis.powstonSavings >= 0 ? "Powston savings:" : "Powston cost:"
+        analysis.powstonSavings >= 0 ? "Powston savings:" : "Arbitrage cost:"
     }
     
     // Build tariff description
@@ -544,10 +551,10 @@ struct SavingsAnalysisCard: View {
                     .foregroundColor(.secondary)
             }
             
-            // Solar contribution
+            // Generation contribution (solar/wind/hydro/mixed)
             HStack {
-                Image(systemName: "sun.max.fill")
-                    .foregroundColor(.yellow)
+                Image(systemName: generationIcon)
+                    .foregroundColor(generationColor)
                     .frame(width: 20)
                 Text(solarLabel)
                     .font(.subheadline)

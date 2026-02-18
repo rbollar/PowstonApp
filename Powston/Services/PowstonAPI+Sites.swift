@@ -335,23 +335,46 @@ extension PowstonAPI {
     func switchToSite(_ site: Site) async {
         clearMeterRecordsCache()
         clearDayRateSummaryCache()
-        
+
         let siteInverters = inverters.filter { $0.siteId == site.id }
-        guard !siteInverters.isEmpty else { return }
-        
+
+        if siteInverters.isEmpty {
+            // Zero-inverter site (e.g. hydro) — set site directly, clear inverter data
+            await MainActor.run {
+                withTransaction(Transaction(animation: nil)) {
+                    persistedSiteId = site.id
+                    selectedInverterId = 0
+                    data = nil
+                    isLoading = false
+                    error = nil
+                }
+            }
+            await MainActor.run {
+                NotificationCenter.default.post(name: .siteDidChange, object: nil)
+            }
+
+            // Trigger LocalVolts daily sync for zero-inverter sites (fire-and-forget)
+            let siteId = site.id
+            Task.detached { [siteId] in
+                await LocalVoltsService.shared.performDailySyncIfNeeded(siteId: siteId)
+            }
+
+            return
+        }
+
         if let lead = leadInverter(forSiteId: site.id) {
             selectedInverterId = lead.id
             await fetchData()
         } else {
             selectedInverterId = siteInverters[0].id
             await fetchData()
-            
+
             if let lead = leadInverter(forSiteId: site.id), lead.id != selectedInverterId {
                 selectedInverterId = lead.id
                 await fetchData()
             }
         }
-        
+
         await MainActor.run {
             NotificationCenter.default.post(name: .siteDidChange, object: nil)
         }

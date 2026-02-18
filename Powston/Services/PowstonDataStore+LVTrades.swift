@@ -361,10 +361,10 @@ extension PowstonDataStore {
         guard let db = dbQueue else { return 0 }
 
         do {
-            return try db.write { db -> Int in
+            return try db.write { db -> Int in  
                 // Keep only the most recent record for each period/counterparty/direction combo
                 // Group by period rounded to minute to handle floating-point timestamp differences
-                let deleted = try db.execute(
+                _ = try db.execute(
                     sql: """
                         DELETE FROM lv_interval_trades
                         WHERE id NOT IN (

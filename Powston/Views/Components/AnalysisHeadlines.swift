@@ -75,18 +75,4 @@ struct AnalysisHeadlines {
         }
     }
 
-    // MARK: - Retailer Comparison
-
-    static func retailerComparison(result: RetailerComparisonResult) -> String {
-        let annual = Int(result.annualizedDifference)
-        let retailer = result.cheaperRetailer.displayName
-
-        if annual >= 100 {
-            return "\(retailer) saves ~\(formatCurrencyRounded(result.annualizedDifference))/year"
-        } else if annual >= 10 {
-            return "\(retailer) saves ~\(formatCurrency(result.annualizedDifference))/year"
-        } else {
-            return "Both retailers cost about the same"
-        }
-    }
 }

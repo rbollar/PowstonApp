@@ -296,6 +296,50 @@ extension PowstonDataStore {
         }
     }
 
+    /// Remove non-expired orders that are no longer returned by the API
+    /// Only removes orders whose dateTo >= today (i.e., orders the API should still be returning).
+    /// Preserves completed/historical orders that the API may no longer include.
+    func removeStaleOrders(siteId: Int, keepIds: Set<String>) throws -> Int {
+        guard let db = dbQueue, !keepIds.isEmpty else { return 0 }
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Australia/Brisbane")!
+        let today = calendar.startOfDay(for: Date())
+
+        return try db.write { db -> Int in
+            // Only consider non-expired orders as potentially stale
+            // Expired orders (dateTo < today) are preserved as historical records
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT id FROM lv_orders WHERE site_id = ? AND date_to >= ?",
+                arguments: [siteId, today]
+            )
+            let activeIds = rows.compactMap { $0["id"] as? String }
+
+            let staleIds = activeIds.filter { !keepIds.contains($0) }
+            guard !staleIds.isEmpty else { return 0 }
+
+            // Delete stale non-expired orders (cancelled on LocalVolts but still in our DB)
+            let placeholders = staleIds.map { _ in "?" }.joined(separator: ", ")
+            let args: [DatabaseValueConvertible] = [siteId] + staleIds.map { $0 as DatabaseValueConvertible }
+            try db.execute(
+                sql: "DELETE FROM lv_orders WHERE site_id = ? AND id IN (\(placeholders))",
+                arguments: StatementArguments(args)
+            )
+
+            let removed = db.changesCount
+            if removed > 0 {
+                for id in staleIds.prefix(5) {
+                    print("   🗑️ Removed stale order: \(id)")
+                }
+                if staleIds.count > 5 {
+                    print("   🗑️ ... and \(staleIds.count - 5) more")
+                }
+            }
+            return removed
+        }
+    }
+
     /// Clear all LV orders for a site
     func clearLVOrders(siteId: Int) {
         guard let db = dbQueue else { return }

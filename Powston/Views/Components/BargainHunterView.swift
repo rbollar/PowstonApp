@@ -367,7 +367,7 @@ struct BargainHunterView: View {
                 Divider()
                 
                 ForEach(result.topCouldHaveWaited) { sample in
-                    sampleRow(sample, timezone: result.config.timezone)
+                    sampleRow(sample, timezone: powstonTimezone())
                     
                     if sample.id != result.topCouldHaveWaited.last?.id {
                         Divider()
@@ -569,7 +569,7 @@ struct BargainHunterView: View {
         Task {
             // Refresh data availability before analysis
             await api.refreshLatestCompleteDataDate()
-            await analysis.analyzeImports(config: config, latestCompleteDataDate: api.latestCompleteDataDate)
+            _ = await analysis.analyzeImports(config: config, latestCompleteDataDate: api.latestCompleteDataDate)
         }
     }
     

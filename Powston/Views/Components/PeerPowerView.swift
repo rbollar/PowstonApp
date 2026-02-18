@@ -73,6 +73,22 @@ enum P2PViewMode: String, CaseIterable {
     case market = "Market"
 }
 
+// MARK: - Contract Period Selection
+
+enum ContractPeriod: String, CaseIterable {
+    case sevenDay = "7 Day"
+    case fourWeek = "4 Wk"
+    case custom = "Custom"
+
+    var days: Int? {
+        switch self {
+        case .sevenDay: return 7
+        case .fourWeek: return 28
+        case .custom: return nil
+        }
+    }
+}
+
 // MARK: - Main View
 
 struct PeerPowerView: View {
@@ -91,6 +107,16 @@ struct PeerPowerView: View {
     // Note: showRecommendationHelp, showTradeoffHelp removed - no longer needed after reorganization
     @State private var showScenariosHelp = false
     @State private var showHourlyHelp = false
+
+    // Contract period selection
+    @State private var contractPeriod: ContractPeriod = {
+        if let raw = UserDefaults.standard.string(forKey: "contract_suggestion_period"),
+           let period = ContractPeriod(rawValue: raw) {
+            return period
+        }
+        return .sevenDay
+    }()
+    @State private var customDays: Int = UserDefaults.standard.object(forKey: "contract_suggestion_custom_days") as? Int ?? 30
 
     // P2P Export Override via Training Parameters
     @State private var p2pParams: TrainingParameters?
@@ -120,6 +146,10 @@ struct PeerPowerView: View {
 
     // Track when we're waiting for analysis to start
     @State private var isStartingAnalysis = false
+
+    // First-visit P2P onboarding popup
+    @AppStorage("p2p_first_visit_seen") private var p2pFirstVisitSeen: Bool = false
+    @State private var showP2POnboarding = false
 
     // Market demand detail disclosure
     @State private var showMarketDemandDetail = false
@@ -176,6 +206,17 @@ struct PeerPowerView: View {
         }
         .navigationTitle("Peer Power")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            if !p2pFirstVisitSeen {
+                showP2POnboarding = true
+            }
+        }
+        .sheet(isPresented: $showP2POnboarding) {
+            P2POnboardingSheet(onDismiss: {
+                p2pFirstVisitSeen = true
+                showP2POnboarding = false
+            })
+        }
         // Manual CSV import hidden - using LocalVolts API instead
         // Keep code in case LV API changes and we need to revert
         // .toolbar {
@@ -1252,7 +1293,7 @@ struct PeerPowerView: View {
         VStack(spacing: 20) {
             // 1. Recommendation first - the answer
             if let tiered = result.tieredRecommendation {
-                tieredRecommendationCard(tiered)
+                tieredRecommendationCard(tiered, periodDays: effectiveContractDays)
             } else {
                 noTradeHistoryCard
             }
@@ -1428,7 +1469,7 @@ struct PeerPowerView: View {
                     Text("You're selling directly to other LocalVolts customers instead of the grid.")
                         .font(.subheadline)
 
-                    Text("Current market (without P2P):")
+                    Text("The opportunity:")
                         .font(.caption.weight(.medium))
                         .foregroundColor(.secondary)
                         .padding(.top, 4)
@@ -1436,7 +1477,7 @@ struct PeerPowerView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         helpBullet("You receive ~10¢/kWh selling to spot", color: .orange)
                         helpBullet("Buyers pay ~33¢/kWh buying from grid", color: .red)
-                        helpBullet("The ~22¢ gap is opportunity for both", color: .purple)
+                        helpBullet("The ~22¢ gap is the P2P opportunity zone", color: .purple)
                     }
 
                     Text("With P2P, you agree on a price in between — you earn more than spot, buyers pay less than grid.")
@@ -1446,15 +1487,29 @@ struct PeerPowerView: View {
 
                     Divider()
 
-                    Text("Important considerations:")
+                    Text("How matching works:")
                         .font(.caption.weight(.medium))
                         .foregroundColor(.secondary)
 
                     VStack(alignment: .leading, spacing: 6) {
-                        helpBullet("Buyers book 5-7 days ahead — same-day trades rarely match", color: .secondary)
-                        helpBullet("Your allocation is based on 2 weeks of export history per time window", color: .secondary)
-                        helpBullet("Missing committed trades damages your future allocation", color: .secondary)
-                        helpBullet("Unmatched P2P offers automatically fall back to spot — no penalty", color: .secondary)
+                        helpBullet("Trades match by: 1) buyer preferences, 2) price at buyer's location, 3) trade placement time", color: .purple)
+                        helpBullet("Price is competitive — lower offers get matched first in a seller-heavy market", color: .orange)
+                        helpBullet("Each site gets an individual price based on its grid location, not just distance", color: .secondary)
+                        helpBullet("You can book a trade right up until the interval starts", color: .secondary)
+                    }
+
+                    Divider()
+
+                    Text("Settlement:")
+                        .font(.caption.weight(.medium))
+                        .foregroundColor(.secondary)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        helpBullet("No penalties for missing trades — settlement is on actual meter data", color: .green)
+                        helpBullet("You can never sell more than you generate or buy more than you consume", color: .secondary)
+                        helpBullet("Forward matched amounts adjust automatically as new forecasts arrive", color: .secondary)
+                        helpBullet("Unmatched P2P offers fall back to spot — no downside risk", color: .green)
+                        helpBullet("Cross-state trades can match but won't settle if the interconnector is constrained", color: .secondary)
                     }
                 }
                 .padding(12)
@@ -2090,15 +2145,66 @@ struct PeerPowerView: View {
         }
     }
 
+    // MARK: - Contract Period Picker
+
+    private var effectiveContractDays: Int {
+        contractPeriod.days ?? max(7, min(90, customDays))
+    }
+
+    private var contractPeriodTitle: String {
+        switch contractPeriod {
+        case .sevenDay: return "7-Day Contract Suggestion"
+        case .fourWeek: return "4-Week Contract Suggestion"
+        case .custom: return "\(effectiveContractDays)-Day Contract Suggestion"
+        }
+    }
+
+    private var contractPeriodPicker: some View {
+        VStack(spacing: 6) {
+            Picker("Contract Period", selection: $contractPeriod) {
+                ForEach(ContractPeriod.allCases, id: \.self) { period in
+                    Text(period.rawValue).tag(period)
+                }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: contractPeriod) {
+                UserDefaults.standard.set(contractPeriod.rawValue, forKey: "contract_suggestion_period")
+            }
+
+            if contractPeriod == .custom {
+                HStack(spacing: 8) {
+                    Text("Days:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    TextField("Days", value: $customDays, format: .number)
+                        .keyboardType(.numberPad)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 60)
+                        .onChange(of: customDays) {
+                            let clamped = max(7, min(90, customDays))
+                            if clamped != customDays { customDays = clamped }
+                            UserDefaults.standard.set(clamped, forKey: "contract_suggestion_custom_days")
+                        }
+                    Stepper("", value: $customDays, in: 7...90)
+                        .labelsHidden()
+                    Spacer()
+                }
+            }
+        }
+    }
+
     // MARK: - Tiered Contract Recommendation Card
 
-    private func tieredRecommendationCard(_ tiered: P2PTieredRecommendation) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private func tieredRecommendationCard(_ tiered: P2PTieredRecommendation, periodDays: Int = 7) -> some View {
+        let scaled = tiered.scaled(toDays: periodDays)
+        let periodLabel = periodDays == 7 ? "Weekly" : "\(periodDays)-Day"
+
+        return VStack(alignment: .leading, spacing: 12) {
             // Header with data-driven badge
             HStack {
                 Image(systemName: "doc.text.fill")
                     .foregroundColor(.purple)
-                Text("7-Day Contract Suggestion")
+                Text(contractPeriodTitle)
                     .font(.headline)
                 Spacer()
                 if tiered.hasHistoricalData {
@@ -2122,9 +2228,12 @@ struct PeerPowerView: View {
                 }
             }
 
+            // Contract period selector (inline within card)
+            contractPeriodPicker
+
             // Only show sync prompt if there's NO trade data at all
             // If there's data but no clusters formed, don't pester - data exists
-            if !tiered.hasHistoricalData && lvService.tradeCount == 0 {
+            if !tiered.hasHistoricalData && lvService.tradeCount == 0 && !tiered.tiers.contains(where: { $0.historicalVolumeKwh > 0 }) {
                 if lvService.hasCredentials {
                     // Has credentials - prompt to sync
                     Button(action: { syncLVTrades() }) {
@@ -2293,6 +2402,16 @@ struct PeerPowerView: View {
             }
             .padding(.vertical, 4)
 
+            // System size assessment
+            P2PSystemSizeAssessment(
+                batteryCapacityKwh: tiered.batteryCapacityKwh,
+                effectiveExportableKwh: tiered.effectiveExportableKwh,
+                inverterExportKw: tiered.inverterExportKw
+            )
+
+            // Consistency tracker
+            P2PConsistencyTracker(tiered: tiered)
+
             Divider()
 
             // Tier breakdown header
@@ -2301,7 +2420,7 @@ struct PeerPowerView: View {
                 .foregroundColor(.secondary)
 
             ForEach(tiered.tiers) { tier in
-                tierRow(tier, showHistorical: tiered.hasHistoricalData)
+                tierRow(tier, showHistorical: tiered.hasHistoricalData, periodMultiplier: scaled.multiplier)
             }
 
             // LV Entry Format
@@ -2333,13 +2452,13 @@ struct PeerPowerView: View {
 
             Divider()
 
-            // Weekly totals
+            // Period totals (scaled from weekly base)
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Weekly")
+                    Text(periodLabel)
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Text("\(Int(tiered.weeklyTotalKwh)) kWh")
+                    Text("\(Int(scaled.totalKwh)) kWh")
                         .font(.headline)
                 }
 
@@ -2360,21 +2479,27 @@ struct PeerPowerView: View {
                     Text("Est. Revenue")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Text(formatCurrency(tiered.weeklyEstimatedRevenue))
+                    Text(formatCurrency(scaled.estimatedRevenue))
                         .font(.headline)
                         .foregroundColor(.green)
                 }
             }
 
-            // Daily/Monthly projection
+            // Daily projection + period total
             HStack {
                 Text("≈ \(formatCurrency(tiered.weeklyEstimatedRevenue / 7))/day")
                     .font(.caption)
                     .foregroundColor(.secondary)
                 Spacer()
-                Text("≈ \(formatCurrency(tiered.weeklyEstimatedRevenue * 4.3))/month")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                if periodDays == 7 {
+                    Text("≈ \(formatCurrency(tiered.weeklyEstimatedRevenue * 4.3))/month")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("≈ \(formatCurrency(scaled.estimatedRevenue)) for \(periodDays) days")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
 
             // Comparison to previous contract
@@ -3159,7 +3284,7 @@ struct PeerPowerView: View {
         }
     }
 
-    private func tierRow(_ tier: P2PRecommendedTier, showHistorical: Bool) -> some View {
+    private func tierRow(_ tier: P2PRecommendedTier, showHistorical: Bool, periodMultiplier: Double = 1.0) -> some View {
         VStack(spacing: 4) {
             HStack(spacing: 8) {
                 // Percentage - prominent for LV entry (fixed width to prevent wrapping)
@@ -3177,16 +3302,16 @@ struct PeerPowerView: View {
 
                 Spacer()
 
-                // Volume (reference)
-                Text(String(format: "%.0f", tier.weeklyKwh))
+                // Volume (reference) - scaled by period multiplier
+                Text(String(format: "%.0f", tier.weeklyKwh * periodMultiplier))
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                 + Text(" kWh")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                // Revenue
-                Text(formatCurrency(tier.weeklyRevenue))
+                // Revenue - scaled by period multiplier
+                Text(formatCurrency(tier.weeklyRevenue * periodMultiplier))
                     .font(.subheadline.bold())
                     .foregroundColor(.green)
             }
@@ -3541,6 +3666,314 @@ struct PeerPowerView: View {
             // Refresh data availability before analysis
             await api.refreshLatestCompleteDataDate()
             await analysis.runBuyerAnalysis(api: api, config: config)
+        }
+    }
+}
+
+// MARK: - P2P Onboarding Sheet
+
+struct P2POnboardingSheet: View {
+    let onDismiss: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Hero
+                    VStack(spacing: 8) {
+                        Image(systemName: "person.2.fill")
+                            .font(.system(size: 44))
+                            .foregroundStyle(.purple)
+                        Text("P2P Trading")
+                            .font(.title.bold())
+                        Text("Sell your excess energy directly to other LocalVolts customers at prices better than spot.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 8)
+
+                    Divider()
+
+                    // Key concepts
+                    onboardingPoint(
+                        icon: "chart.line.uptrend.xyaxis",
+                        color: .green,
+                        title: "The Opportunity",
+                        detail: "Without P2P, you receive ~10¢/kWh at spot. Buyers pay ~33¢/kWh from grid. P2P lets you agree on a price in between — you earn more, they pay less."
+                    )
+
+                    onboardingPoint(
+                        icon: "clock.badge.checkmark",
+                        color: .blue,
+                        title: "Consistency is Key",
+                        detail: "Your fill rate is earned over 2+ weeks of consistent delivery. You must export your contracted amount every 5-minute period during your window. The first ~12 days are ramp-up."
+                    )
+
+                    onboardingPoint(
+                        icon: "doc.text.fill",
+                        color: .orange,
+                        title: "Contracts are Commitments",
+                        detail: "Buyers book in advance — some more than a month ahead. Better capture comes when you can commit early. Missing committed trades damages your future allocation. Set contracts you can reliably deliver, even on cloudy days."
+                    )
+
+                    onboardingPoint(
+                        icon: "battery.75percent",
+                        color: .cyan,
+                        title: "System Size Matters",
+                        detail: "Larger batteries (60+ kWh) see meaningful returns. Smaller systems may only generate modest additional income. Factor in battery cycling costs."
+                    )
+
+                    onboardingPoint(
+                        icon: "dollarsign.arrow.circlepath",
+                        color: .purple,
+                        title: "Pricing Matters",
+                        detail: "If you price below the spot rate during a spike, you lose that opportunity cost. Our pricing strategy helps ensure you come out ahead overall, but P2P is not risk-free."
+                    )
+                }
+                .padding()
+            }
+            .navigationTitle("Before You Start")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Got It") {
+                        onDismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+    }
+
+    private func onboardingPoint(icon: String, color: Color, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.title3)
+                .foregroundStyle(color)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.subheadline.bold())
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+// MARK: - System Size Assessment
+
+struct P2PSystemSizeAssessment: View {
+    let batteryCapacityKwh: Double
+    let effectiveExportableKwh: Double
+    let inverterExportKw: Double
+
+    private var tier: SystemTier {
+        if effectiveExportableKwh >= 40 {
+            return .large
+        } else if effectiveExportableKwh >= 15 {
+            return .medium
+        } else {
+            return .small
+        }
+    }
+
+    private enum SystemTier {
+        case large, medium, small
+
+        var title: String {
+            switch self {
+            case .large: return "Well Suited for P2P"
+            case .medium: return "Moderate P2P Potential"
+            case .small: return "Consider Carefully"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .large: return "checkmark.circle.fill"
+            case .medium: return "minus.circle.fill"
+            case .small: return "exclamationmark.triangle.fill"
+            }
+        }
+
+        var color: Color {
+            switch self {
+            case .large: return .green
+            case .medium: return .yellow
+            case .small: return .orange
+            }
+        }
+
+        func detail(exportableKwh: Double) -> String {
+            switch self {
+            case .large:
+                return "Your \(Int(exportableKwh)) kWh exportable capacity supports strong P2P returns."
+            case .medium:
+                return "Your \(Int(exportableKwh)) kWh exportable capacity can generate moderate P2P income. Keep contracts conservative."
+            case .small:
+                return "With \(Int(exportableKwh)) kWh exportable, P2P returns may be modest. Daily battery cycling also adds wear. Consider whether the extra revenue justifies the commitment."
+            }
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: tier.icon)
+                .foregroundStyle(tier.color)
+                .font(.subheadline)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(tier.title)
+                    .font(.caption.bold())
+                    .foregroundStyle(tier.color)
+                Text(tier.detail(exportableKwh: effectiveExportableKwh))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .background(tier.color.opacity(0.1))
+        .cornerRadius(8)
+    }
+}
+
+// MARK: - Consistency Tracker Card
+
+struct P2PConsistencyTracker: View {
+    let tiered: P2PTieredRecommendation
+
+    private var dailyTargetKwh: Double {
+        tiered.weeklyTotalKwh / 7.0
+    }
+
+    private var dailyExportableKwh: Double {
+        tiered.effectiveExportableKwh
+    }
+
+    private var fillRateCapability: Double {
+        guard dailyTargetKwh > 0 else { return 1.0 }
+        return min(1.0, dailyExportableKwh / dailyTargetKwh)
+    }
+
+    /// Aggregate fill rate from all tiers that have historical data
+    private var historicalFillRate: Double? {
+        let tiersWithData = tiered.tiers.filter { $0.historicalFillRate != nil }
+        guard !tiersWithData.isEmpty else { return nil }
+        let totalVol = tiersWithData.reduce(0.0) { $0 + $1.historicalVolumeKwh }
+        guard totalVol > 0 else { return nil }
+        // Volume-weighted fill rate
+        return tiersWithData.reduce(0.0) { $0 + ($1.historicalFillRate ?? 0) * $1.historicalVolumeKwh } / totalVol
+    }
+
+    private var rampUpDaysEstimate: Int {
+        // ~12 days ramp-up based on community data
+        if let fillRate = historicalFillRate, fillRate > 0.8 {
+            return 0  // Already ramped up
+        }
+        return 12
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "chart.bar.fill")
+                    .foregroundStyle(.cyan)
+                Text("Consistency Tracker")
+                    .font(.caption.bold())
+            }
+
+            // Fill rate bar
+            if let fillRate = historicalFillRate {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Observed Fill Rate")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(String(format: "%.0f%%", fillRate * 100))
+                            .font(.caption.bold())
+                            .foregroundStyle(fillRateColor(fillRate))
+                    }
+
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color(.tertiarySystemFill))
+                                .frame(height: 8)
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(fillRateColor(fillRate))
+                                .frame(width: max(0, geo.size.width * fillRate), height: 8)
+                        }
+                    }
+                    .frame(height: 8)
+
+                    fillRateMessage(fillRate)
+                }
+            } else {
+                // No historical data yet
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "hourglass")
+                            .foregroundStyle(.orange)
+                            .font(.caption)
+                        Text("No fill rate data yet")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text("Expect ~12 days of ramp-up before your fill rate stabilizes. Consistency during this period builds your allocation.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            // System capability check
+            if fillRateCapability < 1.0 {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                        .font(.caption2)
+                    Text("Your daily exportable capacity (\(Int(dailyExportableKwh)) kWh) is less than the daily target (\(Int(dailyTargetKwh)) kWh). Consider reducing contract volume.")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+        .padding(10)
+        .background(Color(.tertiarySystemBackground))
+        .cornerRadius(8)
+    }
+
+    private func fillRateColor(_ rate: Double) -> Color {
+        if rate >= 0.8 { return .green }
+        if rate >= 0.5 { return .yellow }
+        return .orange
+    }
+
+    private func fillRateMessage(_ rate: Double) -> some View {
+        Group {
+            if rate >= 0.9 {
+                Text("Excellent consistency. Your allocation should be at or near maximum.")
+                    .font(.caption2)
+                    .foregroundStyle(.green)
+            } else if rate >= 0.7 {
+                Text("Good consistency. Keep delivering to build your allocation further.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else if rate >= 0.5 {
+                Text("Fill rate is building. Ensure you can export the contracted amount every 5-min period during your window.")
+                    .font(.caption2)
+                    .foregroundStyle(.yellow)
+            } else {
+                Text("Low fill rate. Missing trades reduces future allocation. Consider reducing contract volume to what you can reliably deliver.")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
         }
     }
 }

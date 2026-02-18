@@ -826,6 +826,7 @@ struct HistoryView: View {
                         networkName: api.selectedSite?.network,
                         importTariff: api.selectedSite?.tariff,
                         exportTariff: api.selectedSite?.exportTariff,
+                        site: api.selectedSite,
                         p2pCounterparties: dayP2PCounterparties,
                         p2pImportDateRange: p2pImportDateRange
                     )

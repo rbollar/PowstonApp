@@ -46,9 +46,9 @@ struct UnfilledOpportunityCard: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                if let clearing = alert.marketClearingCents,
+                if let market = alert.marketClearingCents,
                    let suggested = alert.opportunities.first?.suggestedPriceCents {
-                    Text("Suggested price: \(String(format: "%.1f¢", suggested)) (just below market clearing)")
+                    Text("Suggested price: \(String(format: "%.1f¢", suggested)) (just below market clearing at \(String(format: "%.1f¢", market)))")
                         .font(.caption.weight(.medium))
                         .foregroundColor(.green)
                 }
@@ -136,7 +136,7 @@ struct UnfilledOpportunityCard: View {
     private func opportunityRow(_ opp: UnfilledOpportunity) -> some View {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
-        formatter.timeZone = TimeZone(identifier: "Australia/Brisbane")
+        formatter.timeZone = powstonTimezone()
 
         return HStack {
             Text("\(formatter.string(from: opp.periodStart))–\(formatter.string(from: opp.periodEnd))")
@@ -190,3 +190,4 @@ struct UnfilledOpportunityBanner: View {
         .buttonStyle(.plain)
     }
 }
+

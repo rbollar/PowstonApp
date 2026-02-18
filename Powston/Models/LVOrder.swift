@@ -60,6 +60,18 @@ struct LVOrder: Codable, Identifiable, FetchableRecord, PersistableRecord {
 
     var isMarketPrice: Bool { priceCents == nil }
 
+    /// Whether this order spans less than a full day (intra-day / short contract)
+    var isIntraDay: Bool {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Australia/Brisbane")!
+        return calendar.isDate(dateFrom, inSameDayAs: dateTo) && dateFrom != dateTo
+    }
+
+    /// Duration in hours for intra-day contracts
+    var durationHours: Double {
+        dateTo.timeIntervalSince(dateFrom) / 3600.0
+    }
+
     var durationDays: Int {
         let calendar = Calendar.current
         return (calendar.dateComponents([.day], from: dateFrom, to: dateTo).day ?? 0) + 1
@@ -177,14 +189,22 @@ extension LVOrder {
         let aest = TimeZone(identifier: "Australia/Brisbane")!
 
         if let dateStr = value as? String {
-            // Try ISO8601 first
+            // Try ISO8601 with timezone first (e.g. "2026-02-13T17:00:00+10:00")
             let isoFormatter = ISO8601DateFormatter()
             isoFormatter.timeZone = aest
             if let date = isoFormatter.date(from: dateStr) {
                 return date
             }
 
-            // Try date only format
+            // Try datetime without timezone (e.g. "2026-02-13T17:00:00" — assume AEST)
+            let dtFormatter = DateFormatter()
+            dtFormatter.timeZone = aest
+            dtFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+            if let date = dtFormatter.date(from: dateStr) {
+                return date
+            }
+
+            // Try date only format (e.g. "2026-02-13")
             let dateFormatter = DateFormatter()
             dateFormatter.timeZone = aest
             dateFormatter.dateFormat = "yyyy-MM-dd"
@@ -401,15 +421,61 @@ struct LVOrderGroup: Identifiable {
     var isSell: Bool { primaryOrder.isSell }
     var isBuy: Bool { primaryOrder.isBuy }
 
+    /// Whether this contract is intra-day (same calendar day, different times)
+    var isIntraDay: Bool { primaryOrder.isIntraDay }
+
+    /// Duration in hours for intra-day contracts
+    var durationHours: Double { primaryOrder.durationHours }
+
     var durationDays: Int { primaryOrder.durationDays }
 
     var dayProgress: Int? { primaryOrder.dayProgress }
+
+    /// Human-readable duration string
+    var durationDescription: String {
+        if isIntraDay {
+            let hours = durationHours
+            if hours < 1 {
+                return String(format: "%.0f min", hours * 60)
+            } else if hours == Double(Int(hours)) {
+                return "\(Int(hours))h"
+            } else {
+                return String(format: "%.1fh", hours)
+            }
+        }
+        let days = durationDays
+        return days == 1 ? "1 day" : "\(days) days"
+    }
+
+    /// Time window string for intra-day contracts (from dateFrom/dateTo times)
+    var intraDayTimeWindow: String? {
+        guard isIntraDay else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mma"
+        let tz = powstonTimezone()
+        formatter.timeZone = tz
+        formatter.amSymbol = "am"
+        formatter.pmSymbol = "pm"
+        let fromStr = formatter.string(from: dateFrom)
+        let toStr = formatter.string(from: dateTo)
+        return "\(fromStr)–\(toStr) \(tz.abbreviation() ?? "AEST")"
+    }
 
     /// Convert to P2PContract with multiple tiers for performance tracking
     func toP2PContract() -> P2PContract {
         let contractTiers = tiers
         let contractDirection: P2PTradeDirection = isSell ? .sell : .buy
-        let hours = (startHour ?? 10, endHour ?? 16)
+
+        // Derive hours from dates for intra-day contracts, fall back to stored/default
+        let hours: (Int, Int)
+        if isIntraDay {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(identifier: "Australia/Brisbane")!
+            hours = (calendar.component(.hour, from: dateFrom),
+                     calendar.component(.hour, from: dateTo))
+        } else {
+            hours = (startHour ?? 10, endHour ?? 16)
+        }
 
         return P2PContract(
             id: id,
@@ -430,56 +496,82 @@ struct LVOrderGroup: Identifiable {
 }
 
 extension LVOrder {
-    /// Group orders by date range and trade session
-    /// Orders with same dateFrom/dateTo and tradeDates within threshold are merged
+    /// Group orders by date range into contract groups
+    /// All orders with the same (direction, dateFrom, dateTo) form one contract group.
+    /// For same-day (intra-day) contracts, uses time-aware grouping to keep
+    /// separate short contracts apart while still merging tiers.
+    /// When multiple trade sessions exist for the same date range (e.g. cancelled + recreated),
+    /// only the most recent session's orders are kept.
     /// - Parameters:
     ///   - orders: Array of LVOrder to group
-    ///   - sessionThreshold: Maximum seconds between tradeDates to be considered same session (default 10 minutes)
-    /// - Returns: Array of LVOrderGroup, each representing one or more merged orders
-    static func groupByContract(_ orders: [LVOrder], sessionThreshold: TimeInterval = 600) -> [LVOrderGroup] {
-        // First group by (direction, dateFrom, dateTo)
-        var dateGroups: [String: [LVOrder]] = [:]
+    /// - Returns: Array of LVOrderGroup, each representing one contract with its tiers
+    static func groupByContract(_ orders: [LVOrder]) -> [LVOrderGroup] {
+        // Use explicit AEST calendar (matching date parsing timezone)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Australia/Brisbane")!
 
-        let calendar = Calendar.current
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.timeZone = TimeZone(identifier: "Australia/Brisbane")!
+
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm"
+        timeFormatter.timeZone = TimeZone(identifier: "Australia/Brisbane")!
+
+        // Separate intra-day orders from multi-day orders
+        var multiDayGroups: [String: [LVOrder]] = [:]
+        var sameDayOrders: [String: [LVOrder]] = [:]  // keyed by direction_date
+
         for order in orders {
-            let fromDay = calendar.startOfDay(for: order.dateFrom)
-            let toDay = calendar.startOfDay(for: order.dateTo)
-            let key = "\(order.direction)_\(fromDay.timeIntervalSince1970)_\(toDay.timeIntervalSince1970)"
-            dateGroups[key, default: []].append(order)
+            let fromStr = dateFormatter.string(from: order.dateFrom)
+            let toStr = dateFormatter.string(from: order.dateTo)
+
+            if fromStr == toStr && order.dateFrom != order.dateTo {
+                // Same calendar day but different times — intra-day contract
+                // Use full datetime in key to keep separate time windows apart
+                let fromTimeStr = timeFormatter.string(from: order.dateFrom)
+                let toTimeStr = timeFormatter.string(from: order.dateTo)
+                let key = "\(order.direction)_\(fromTimeStr)_\(toTimeStr)"
+                multiDayGroups[key, default: []].append(order)
+            } else if fromStr == toStr {
+                // Same dateFrom and dateTo with identical times (date-only from API)
+                // These need tradeDate clustering to separate distinct contracts
+                let key = "\(order.direction)_\(fromStr)"
+                sameDayOrders[key, default: []].append(order)
+            } else {
+                // Multi-day contract — group by date range as before
+                let key = "\(order.direction)_\(fromStr)_\(toStr)"
+                multiDayGroups[key, default: []].append(order)
+            }
         }
 
         var result: [LVOrderGroup] = []
 
-        // Within each date group, further split by trade session timing
-        for (_, groupOrders) in dateGroups {
-            // Sort by tradeDate
-            let sorted = groupOrders.sorted { $0.tradeDate < $1.tradeDate }
+        // Process multi-day and intra-day-with-times groups
+        for (key, groupOrders) in multiDayGroups {
+            let sorted = groupOrders.sorted { $0.tradeDate > $1.tradeDate }
+            let recentOrders = keepMostRecentSession(sorted)
 
-            var currentSession: [LVOrder] = []
-            var lastTradeDate: Date?
-
-            for order in sorted {
-                if let last = lastTradeDate {
-                    let gap = order.tradeDate.timeIntervalSince(last)
-                    if gap > sessionThreshold {
-                        // New session - save current and start fresh
-                        if !currentSession.isEmpty {
-                            result.append(LVOrderGroup(orders: currentSession))
-                        }
-                        currentSession = [order]
-                    } else {
-                        // Same session
-                        currentSession.append(order)
-                    }
-                } else {
-                    currentSession = [order]
-                }
-                lastTradeDate = order.tradeDate
+            if !recentOrders.isEmpty {
+                result.append(LVOrderGroup(orders: recentOrders))
             }
 
-            // Don't forget the last session
-            if !currentSession.isEmpty {
-                result.append(LVOrderGroup(orders: currentSession))
+            let dropped = sorted.count - recentOrders.count
+            if dropped > 0 {
+                print("📦 Grouping \(key): kept \(recentOrders.count) recent orders, dropped \(dropped) stale")
+            }
+        }
+
+        // Process same-day date-only orders: cluster by tradeDate to separate
+        // distinct contracts from tiers of the same contract
+        for (_, groupOrders) in sameDayOrders {
+            let clusters = clusterByTradeDate(groupOrders, maxGapSeconds: 1800)  // 30 min gap
+            for cluster in clusters {
+                let sorted = cluster.sorted { $0.tradeDate > $1.tradeDate }
+                let recentOrders = keepMostRecentSession(sorted)
+                if !recentOrders.isEmpty {
+                    result.append(LVOrderGroup(orders: recentOrders))
+                }
             }
         }
 
@@ -487,14 +579,57 @@ extension LVOrder {
         let sorted = result.sorted { $0.dateFrom > $1.dateFrom }
 
         // Debug: Log grouping results
-        for group in sorted.prefix(3) {
-            print("📦 Order Group: \(group.orders.count) orders, direction=\(group.direction), total=\(String(format: "%.1f", group.totalVolumeKwh)) kWh")
-            for order in group.orders.prefix(5) {
+        for group in sorted.prefix(5) {
+            let fromStr = timeFormatter.string(from: group.dateFrom)
+            let toStr = timeFormatter.string(from: group.dateTo)
+            print("📦 Order Group: \(group.orders.count) orders, \(group.direction) \(fromStr)→\(toStr), total=\(String(format: "%.1f", group.totalVolumeKwh)) kWh")
+            for order in group.orders {
                 print("   └─ Order \(order.id): \(String(format: "%.1f", order.volumeKwh)) kWh @ \(order.priceString)")
             }
         }
 
         return sorted
+    }
+
+    /// Cluster orders by tradeDate proximity.
+    /// Orders placed within `maxGapSeconds` of each other form one cluster (same contract session).
+    /// Orders placed further apart are separate contracts.
+    private static func clusterByTradeDate(_ orders: [LVOrder], maxGapSeconds: TimeInterval) -> [[LVOrder]] {
+        guard !orders.isEmpty else { return [] }
+        let sorted = orders.sorted { $0.tradeDate < $1.tradeDate }
+
+        var clusters: [[LVOrder]] = []
+        var currentCluster: [LVOrder] = [sorted[0]]
+
+        for order in sorted.dropFirst() {
+            let gap = order.tradeDate.timeIntervalSince(currentCluster.last!.tradeDate)
+            if gap <= maxGapSeconds {
+                currentCluster.append(order)
+            } else {
+                clusters.append(currentCluster)
+                currentCluster = [order]
+            }
+        }
+        clusters.append(currentCluster)
+
+        return clusters
+    }
+
+    /// From a set of orders sorted by tradeDate descending, keep only the most recent session.
+    /// Orders placed within 24 hours of each other are considered the same session.
+    /// This discards stale orders from previous cancelled/replaced contracts.
+    private static func keepMostRecentSession(_ ordersByDateDesc: [LVOrder]) -> [LVOrder] {
+        guard let newest = ordersByDateDesc.first else { return [] }
+
+        var session: [LVOrder] = [newest]
+        for order in ordersByDateDesc.dropFirst() {
+            let gap = abs(order.tradeDate.timeIntervalSince(newest.tradeDate))
+            if gap <= 86400 { // Within 24 hours of the newest order
+                session.append(order)
+            }
+        }
+
+        return session
     }
 }
 
@@ -515,8 +650,16 @@ extension LVOrder {
         // Determine direction
         let direction: P2PTradeDirection = isSell ? .sell : .buy
 
-        // Default hours if not specified
-        let hours = (startHour ?? 10, endHour ?? 16)
+        // Derive hours from dates for intra-day contracts, fall back to stored/default
+        let hours: (Int, Int)
+        if isIntraDay {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(identifier: "Australia/Brisbane")!
+            hours = (calendar.component(.hour, from: dateFrom),
+                     calendar.component(.hour, from: dateTo))
+        } else {
+            hours = (startHour ?? 10, endHour ?? 16)
+        }
 
         return P2PContract(
             id: UUID(uuidString: id) ?? UUID(),  // Try to preserve original ID

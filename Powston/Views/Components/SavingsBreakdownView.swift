@@ -191,7 +191,7 @@ struct SavingsBreakdownView: View {
                 waterfallRow(icon: "powerplug.fill", color: .gray, label: "Grid only baseline", value: result.gridOnlyCost, valueColor: .secondary)
                 waterfallRow(icon: "sun.max.fill", color: .yellow, label: result.solarSavings >= 0 ? "Solar savings" : "Solar cost", value: abs(result.solarSavings), valueColor: result.solarSavings >= 0 ? .green : .red)
                 waterfallRow(icon: "battery.100percent", color: .green, label: result.batterySavings >= 0 ? "Battery savings" : "Battery cost", value: abs(result.batterySavings), valueColor: result.batterySavings >= 0 ? .green : .red)
-                waterfallRow(icon: "brain.head.profile", color: .purple, label: result.powstonSavings >= 0 ? "Powston savings" : "Powston cost", value: abs(result.powstonSavings), valueColor: result.powstonSavings >= 0 ? .green : .red)
+                waterfallRow(icon: "brain.head.profile", color: .purple, label: result.powstonSavings >= 0 ? "Powston savings" : "Arbitrage cost", value: abs(result.powstonSavings), valueColor: result.powstonSavings >= 0 ? .green : .red)
                 
                 Divider()
                 

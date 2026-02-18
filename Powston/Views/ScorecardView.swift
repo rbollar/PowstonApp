@@ -258,10 +258,10 @@ struct ScorecardView: View {
     
     private func formatDateRange(_ start: Date, _ end: Date) -> String {
         let formatter = DateFormatter()
-        formatter.timeZone = TimeZone(identifier: "Australia/Brisbane")
-        
+        formatter.timeZone = powstonTimezone()
+
         var calendar = Calendar.current
-        calendar.timeZone = TimeZone(identifier: "Australia/Brisbane")!
+        calendar.timeZone = powstonTimezone()
         
         let dayAfterStart = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: start))!
         let isSingleDay = calendar.isDate(end, inSameDayAs: dayAfterStart) || calendar.isDate(start, inSameDayAs: end)

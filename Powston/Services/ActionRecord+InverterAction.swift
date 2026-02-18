@@ -108,7 +108,17 @@ extension InverterAction {
                 if let values = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
                     serial = values["serial_number"] as? String
 
+                    // Extract optimal charge/discharge for P2P detection
+                    self.optimalDischarging = values["optimal_discharging"] as? Double
+                    self.optimalCharging = values["optimal_charging"] as? Double
+
                     if let runtimeParams = values["runtime_params"] as? [String: Any] {
+                        if self.optimalDischarging == nil {
+                            self.optimalDischarging = runtimeParams["optimal_discharging"] as? Double
+                        }
+                        if self.optimalCharging == nil {
+                            self.optimalCharging = runtimeParams["optimal_charging"] as? Double
+                        }
                         var nestedDict: [String: NestedInverterSOC] = [:]
                         for (key, value) in runtimeParams {
                             // Keys starting with "A" and length > 8 are inverter serial numbers
@@ -119,6 +129,7 @@ extension InverterAction {
                                 let solar = inverterData["solar_power"] as? Double ?? inverterData["ppv"] as? Double
                                 let battery = inverterData["battery_power"] as? Double
                                 let capacity = inverterData["battery_capacity"] as? Double
+                                let house = inverterData["house_power"] as? Double
 
                                 nestedDict[key] = NestedInverterSOC(
                                     serialNumber: key,
@@ -126,7 +137,8 @@ extension InverterAction {
                                     gridPower: grid,
                                     solarPower: solar,
                                     batteryPower: battery,
-                                    batteryCapacity: capacity
+                                    batteryCapacity: capacity,
+                                    housePower: house
                                 )
                             }
                         }

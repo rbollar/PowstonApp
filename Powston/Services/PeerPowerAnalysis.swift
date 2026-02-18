@@ -150,6 +150,16 @@ struct P2PTieredRecommendation: Codable {
     var effectiveWindowHours: Int {
         filteredEndHour - filteredStartHour
     }
+
+    /// Scale weekly values to an arbitrary contract period
+    func scaled(toDays days: Int) -> (totalKwh: Double, estimatedRevenue: Double, multiplier: Double) {
+        let multiplier = Double(days) / 7.0
+        return (
+            totalKwh: weeklyTotalKwh * multiplier,
+            estimatedRevenue: weeklyEstimatedRevenue * multiplier,
+            multiplier: multiplier
+        )
+    }
 }
 
 /// Summary of the previous/current contract for comparison
@@ -448,12 +458,16 @@ class PeerPowerAnalysis: ObservableObject {
         // Aggregate totals
         let totalExportKwh = intervals.reduce(0) { $0 + $1.exportKwh }
         let totalEarnings = intervals.reduce(0) { $0 + $1.actualEarnings }
-        let avgBuy = intervals.reduce(0) { $0 + $1.buyerPrice } / Double(intervals.count)
-        let avgSell = intervals.reduce(0) { $0 + $1.spotSellPrice } / Double(intervals.count)
+        let avgBuy = totalExportKwh > 0
+            ? intervals.reduce(0) { $0 + $1.buyerPrice * $1.exportKwh } / totalExportKwh
+            : intervals.reduce(0) { $0 + $1.buyerPrice } / Double(max(1, intervals.count))
+        let avgSell = totalExportKwh > 0
+            ? intervals.reduce(0) { $0 + $1.spotSellPrice * $1.exportKwh } / totalExportKwh
+            : intervals.reduce(0) { $0 + $1.spotSellPrice } / Double(max(1, intervals.count))
         let avgSpread = avgBuy - avgSell
-        
+
         let periodDays = calendar.dateComponents([.day], from: startDate, to: endDate).day ?? 60
-        
+
         // Calculate scenarios for each test price
         let scenarios = calculateScenarios(intervals: intervals)
         
@@ -618,8 +632,12 @@ class PeerPowerAnalysis: ObservableObject {
         // Aggregate totals
         let totalImportKwh = intervals.reduce(0) { $0 + $1.importKwh }
         let totalCost = intervals.reduce(0) { $0 + $1.actualCost }
-        let avgGridPrice = intervals.reduce(0) { $0 + $1.gridPrice } / Double(intervals.count)
-        let avgSpotPrice = intervals.reduce(0) { $0 + $1.spotPrice } / Double(intervals.count)
+        let avgGridPrice = totalImportKwh > 0
+            ? intervals.reduce(0) { $0 + $1.gridPrice * $1.importKwh } / totalImportKwh
+            : intervals.reduce(0) { $0 + $1.gridPrice } / Double(max(1, intervals.count))
+        let avgSpotPrice = totalImportKwh > 0
+            ? intervals.reduce(0) { $0 + $1.spotPrice * $1.importKwh } / totalImportKwh
+            : intervals.reduce(0) { $0 + $1.spotPrice } / Double(max(1, intervals.count))
 
         let periodDays = calendar.dateComponents([.day], from: startDate, to: endDate).day ?? 60
 
@@ -817,8 +835,12 @@ class PeerPowerAnalysis: ObservableObject {
             }
 
             let totalImportKwh = hourIntervals.reduce(0) { $0 + $1.importKwh }
-            let avgGrid = hourIntervals.reduce(0) { $0 + $1.gridPrice } / Double(hourIntervals.count)
-            let avgSpot = hourIntervals.reduce(0) { $0 + $1.spotPrice } / Double(hourIntervals.count)
+            let avgGrid = totalImportKwh > 0
+                ? hourIntervals.reduce(0) { $0 + $1.gridPrice * $1.importKwh } / totalImportKwh
+                : hourIntervals.reduce(0) { $0 + $1.gridPrice } / Double(hourIntervals.count)
+            let avgSpot = totalImportKwh > 0
+                ? hourIntervals.reduce(0) { $0 + $1.spotPrice * $1.importKwh } / totalImportKwh
+                : hourIntervals.reduce(0) { $0 + $1.spotPrice } / Double(hourIntervals.count)
             let dailyKwh = totalImportKwh / Double(max(1, periodDays))
 
             breakdown.append(P2PBuyHourlyBreakdown(
@@ -1429,8 +1451,12 @@ class PeerPowerAnalysis: ObservableObject {
             }
             
             let totalExportKwh = hourIntervals.reduce(0) { $0 + $1.exportKwh }
-            let avgBuy = hourIntervals.reduce(0) { $0 + $1.buyerPrice } / Double(hourIntervals.count)
-            let avgSell = hourIntervals.reduce(0) { $0 + $1.spotSellPrice } / Double(hourIntervals.count)
+            let avgBuy = totalExportKwh > 0
+                ? hourIntervals.reduce(0) { $0 + $1.buyerPrice * $1.exportKwh } / totalExportKwh
+                : hourIntervals.reduce(0) { $0 + $1.buyerPrice } / Double(hourIntervals.count)
+            let avgSell = totalExportKwh > 0
+                ? hourIntervals.reduce(0) { $0 + $1.spotSellPrice * $1.exportKwh } / totalExportKwh
+                : hourIntervals.reduce(0) { $0 + $1.spotSellPrice } / Double(hourIntervals.count)
             let avgSpread = avgBuy - avgSell
             
             // Calculate at recommended price
@@ -1957,7 +1983,7 @@ class PeerPowerAnalysis: ObservableObject {
 
         // Reserve 15-20% for probe tier before allocating to proven tiers
         let probeAllocation = maxWeeklyKwh * 0.18  // 18% for probe
-        var remainingForProvenTiers = maxWeeklyKwh - probeAllocation
+        let remainingForProvenTiers = maxWeeklyKwh - probeAllocation
 
         // Sort by fill rate descending for allocation (best performers first)
         // This ensures high-fill tiers get priority allocation

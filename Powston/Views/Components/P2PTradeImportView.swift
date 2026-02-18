@@ -403,8 +403,8 @@ class P2PTradeParser {
             // If there are empty columns AFTER this price, it's Sell (Buy column is empty)
             // If there are no columns or empty columns BEFORE this price (after volume), it's Buy
 
-            let columnsAfterPrice = columns.count - 1 - priceInfo.index
-            let columnsBeforePrice = priceInfo.index - 2  // columns between volume and this price
+            _ = columns.count - 1 - priceInfo.index
+            _ = priceInfo.index - 2  // columns between volume and this price
 
             // Check if there's a meaningful empty column after this price (suggests Buy column exists but is empty = this is Sell)
             var hasEmptyAfter = false

@@ -1192,7 +1192,7 @@ struct P2PCounterpartyDetailView: View {
 
     private func groupLVTradesByDay() -> [Date: [LVIntervalTrade]] {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "Australia/Brisbane")!
+        calendar.timeZone = powstonTimezone()
 
         return Dictionary(grouping: lvTrades) { trade in
             calendar.startOfDay(for: trade.periodStart)
@@ -1282,14 +1282,14 @@ struct P2PCounterpartyDetailView: View {
     private func formatDayHeader(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "E, MMM d, yyyy"
-        formatter.timeZone = TimeZone(identifier: "Australia/Brisbane")
+        formatter.timeZone = powstonTimezone()
         return formatter.string(from: date)
     }
 
     private func formatTradeTime(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
-        formatter.timeZone = TimeZone(identifier: "Australia/Brisbane")
+        formatter.timeZone = powstonTimezone()
         return formatter.string(from: date)
     }
 

@@ -220,7 +220,7 @@ extension PowstonDataStore {
         previousSnapshot: LVContractSnapshot,
         currentSnapshot: LVContractSnapshot
     ) -> [LVSubscriptionChange] {
-        guard let db = dbQueue else { return [] }
+        guard dbQueue != nil else { return [] }
 
         var changes: [LVSubscriptionChange] = []
 

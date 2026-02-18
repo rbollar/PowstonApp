@@ -205,6 +205,8 @@ extension PowstonAPI {
             network: "energex",
             installedSolar: 29920,
             installedBattery: 101880,
+            windPower: nil,
+            hydroPower: nil,
             primaryInverterId: 1,
             latitude: location.lat,
             longitude: location.lng,
@@ -246,7 +248,11 @@ extension PowstonAPI {
             siteId: 1,
             siteName: "Demo Home",
             pvCapacity: 29920,
-            phases: 1
+            phases: 1,
+            bdcRatedPower: 10000,
+            batteryPower: 10000,
+            maxDischarging: 10000,
+            maxCharging: 10000
         )
     }
     
@@ -299,7 +305,7 @@ extension PowstonAPI {
             action: "export",
             lastAction: "export",
             solarPower: 8500,
-            gridPower: -3200,
+            gridPower: 3200,
             housePower: 2100,
             buyPrice: buyForecast[currentPeriod],
             sellPrice: sellForecast[currentPeriod],

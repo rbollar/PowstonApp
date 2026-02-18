@@ -1051,10 +1051,11 @@ struct AchievedOpportunityRow: View {
     let opportunity: DecisionAchievedOpportunity
     let isExpanded: Bool
     let onToggle: () -> Void
-    
+
     private var dateFormatter: DateFormatter {
         let f = DateFormatter()
         f.dateFormat = "MMM d, h:mm a"
+        f.timeZone = powstonTimezone()
         return f
     }
     
@@ -1189,9 +1190,10 @@ struct MissedOpportunityRow: View {
     private var timeFormatter: DateFormatter {
         let f = DateFormatter()
         f.dateFormat = "MMM d, h:mm a"
+        f.timeZone = powstonTimezone()
         return f
     }
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Collapsed row - always visible
@@ -1488,6 +1490,7 @@ struct MissedOpportunitiesAISummary: View {
     private func formatDate(_ date: Date) -> String {
         let f = DateFormatter()
         f.dateFormat = "MMM d, h:mm a"
+        f.timeZone = powstonTimezone()
         return f.string(from: date)
     }
     

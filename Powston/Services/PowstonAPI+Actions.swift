@@ -264,6 +264,69 @@ extension PowstonAPI {
         return SiteActionsData(siteId: config.siteId, date: config.date, inverterActions: actions)
     }
     
+    // MARK: - Fetch Action Detail (on-demand per tap)
+
+    /// Fetches detailed register snapshots for a single action from /api/inverter_action_details/{actionId}
+    /// Returns multiple readings spanning the 5-minute interval, giving a richer picture than the single stored snapshot.
+    func fetchActionDetail(actionId: Int) async -> [ActionDetailSnapshot] {
+        let urlString = "\(baseURL)/api/inverter_action_details/\(actionId)"
+        guard let url = URL(string: urlString) else {
+            print("❌ Invalid URL for inverter_action_details")
+            return []
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 15
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                print("❌ inverter_action_details HTTP error: \(code)")
+                return []
+            }
+
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let runtimeData = json["runtime_data"] as? [[String: Any]] else {
+                print("⚠️ No runtime_data in action detail response")
+                return []
+            }
+
+            let isoFormatter = ISO8601DateFormatter()
+            isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let isoFormatterNoFrac = ISO8601DateFormatter()
+            isoFormatterNoFrac.formatOptions = [.withInternetDateTime]
+
+            var snapshots: [ActionDetailSnapshot] = []
+            for entry in runtimeData {
+                guard let timeStr = entry["time"] as? String,
+                      let time = isoFormatter.date(from: timeStr) ?? isoFormatterNoFrac.date(from: timeStr) else {
+                    continue
+                }
+
+                let snapshot = ActionDetailSnapshot(
+                    time: time,
+                    gridPower: entry["grid_power"] as? Double,
+                    solarPower: entry["solar_power"] as? Double,
+                    batteryPower: entry["battery_power"] as? Double,
+                    housePower: entry["house_power"] as? Double,
+                    batterySoc: entry["battery_soc"] as? Double
+                )
+                snapshots.append(snapshot)
+            }
+
+            snapshots.sort { $0.time < $1.time }
+            print("✅ Action detail \(actionId): \(snapshots.count) register snapshots")
+            return snapshots
+
+        } catch {
+            print("❌ Failed to fetch action detail: \(error.localizedDescription)")
+            return []
+        }
+    }
+
     // MARK: - SOC History
     
     func fetchSOCHistory(inverterId: Int, date: Date) async -> [ActionSOCPoint] {

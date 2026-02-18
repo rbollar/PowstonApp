@@ -782,13 +782,15 @@ struct DecisionSnapshotDashboard: View {
         if let date = formatter.date(from: str) {
             let timeFormatter = DateFormatter()
             timeFormatter.dateFormat = "h:mm a"
+            timeFormatter.timeZone = powstonTimezone()
             return timeFormatter.string(from: date)
         }
-        
+
         formatter.formatOptions = [.withInternetDateTime]
         if let date = formatter.date(from: str) {
             let timeFormatter = DateFormatter()
             timeFormatter.dateFormat = "h:mm a"
+            timeFormatter.timeZone = powstonTimezone()
             return timeFormatter.string(from: date)
         }
         

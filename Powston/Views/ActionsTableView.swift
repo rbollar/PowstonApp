@@ -38,7 +38,11 @@ struct CombinedAction: Identifiable {
     let leadAction: InverterAction
     let allActions: [Int: InverterAction]  // inverterId -> action
     let expectedInverterCount: Int  // How many inverters should have data
-    
+
+    // Lead inverter capacities for accurate P2P vs full-rate classification
+    var leadDischargeCapacity: Int? = nil
+    var leadChargeCapacity: Int? = nil
+
     // Aligned meter data (from next interval, representing this interval's actual flow)
     var alignedMeterData: AlignedMeterData? = nil
     
@@ -65,7 +69,9 @@ struct CombinedAction: Identifiable {
     // Combined values
     var displayTime: String { leadAction.displayTime }
     var displayDateTime: String { leadAction.displayDateTime }
-    var displayAction: String { leadAction.displayAction }
+    var displayAction: String {
+        leadAction.displayAction(dischargeCapacityWatts: leadDischargeCapacity, chargeCapacityWatts: leadChargeCapacity)
+    }
     var reasonSummary: String { leadAction.reasonSummary }
     var reasonFull: String { leadAction.reasonFull }
     var buyPrice: Double? { leadAction.buyPrice }
@@ -317,8 +323,17 @@ struct ActionsTableView: View {
             }
         }
         .sheet(item: $selectedCombinedAction) { combined in
+            // Find next chronological action for SOC-derived battery calculation
+            let nextAction: CombinedAction? = {
+                let sorted = store.combinedActions.sorted { $0.date < $1.date }
+                guard let idx = sorted.firstIndex(where: { $0.date == combined.date }),
+                      idx + 1 < sorted.count else { return nil }
+                return sorted[idx + 1]
+            }()
+
             CombinedActionDetailSheet(
                 combined: combined,
+                nextCombinedAction: nextAction,
                 siteInverters: siteInverters,
                 leadInverterId: leadInverterId
             )
@@ -575,6 +590,7 @@ struct ActionsTableView: View {
         // Create combined actions with aligned meter data
         var combined: [CombinedAction] = []
         let leadId = leadInverterId ?? siteInverters.first?.id ?? 0
+        let leadInverter = siteInverters.first { $0.id == leadId }
         let expectedCount = siteInverters.count
         
         for (index, date) in sortedTimes.enumerated() {
@@ -590,20 +606,66 @@ struct ActionsTableView: View {
             if index + 1 < sortedTimes.count {
                 let nextTime = sortedTimes[index + 1]
                 if let nextActions = actionsByTime[nextTime] {
-                    // Sum meter values from all inverters in next interval
+                    // Solar: sum across inverters (each has actual PV measurement)
                     let nextSolar = nextActions.values.compactMap { $0.solarPower }.reduce(0, +)
-                    let nextBattery = nextActions.values.compactMap { $0.batteryPower }.reduce(0, +)
-                    let nextHome = nextActions.values.compactMap { $0.housePower }.reduce(0, +)
-                    let nextGrid = nextActions.values.compactMap { $0.gridPower }.reduce(0, +)
+
+                    // Battery: lead actual + SOC-derived for followers
+                    let nextLeadAction = nextActions[leadId] ?? nextActions.values.first
+                    let nextLeadBatt = nextLeadAction?.batteryPower ?? 0
+                    var nextBattery = nextLeadBatt
+                    // SOC-derived follower battery: need the interval AFTER next
+                    if index + 2 < sortedTimes.count, siteInverters.count > 1 {
+                        let afterNextTime = sortedTimes[index + 2]
+                        if let afterNextActions = actionsByTime[afterNextTime] {
+                            for inv in siteInverters where inv.id != leadId {
+                                if let currentSOC = nextActions[inv.id]?.batterySoc,
+                                   let futureSOC = afterNextActions[inv.id]?.batterySoc,
+                                   let cap = inv.batteryCapacity, cap > 0 {
+                                    nextBattery += -(futureSOC - currentSOC) / 100.0 * Double(cap) / (5.0 / 60.0)
+                                } else {
+                                    // Fallback to raw setpoint
+                                    nextBattery += nextActions[inv.id]?.batteryPower ?? 0
+                                }
+                            }
+                        } else {
+                            // No future interval - use raw setpoint for followers
+                            for inv in siteInverters where inv.id != leadId {
+                                nextBattery += nextActions[inv.id]?.batteryPower ?? 0
+                            }
+                        }
+                    } else if siteInverters.count > 1 {
+                        for inv in siteInverters where inv.id != leadId {
+                            nextBattery += nextActions[inv.id]?.batteryPower ?? 0
+                        }
+                    }
+
+                    // Grid: lead only (site CT clamp — not per-inverter)
+                    let nextGrid = nextLeadAction?.gridPower ?? 0
+
+                    // Home: derive from lead's energy balance (L_home - L_solar - L_batt = grid_import)
+                    // then site total: L_home + F_solar + F_batt_derived
+                    let nextLeadHome = nextLeadAction?.housePower ?? 0
+                    let nextLeadSolar = nextLeadAction?.solarPower ?? 0
+                    var nextHome = nextLeadHome
+                    if siteInverters.count > 1 {
+                        for inv in siteInverters where inv.id != leadId {
+                            nextHome += nextActions[inv.id]?.solarPower ?? 0
+                            // Add follower battery contribution to home
+                            // (already computed in nextBattery - extract follower portion)
+                        }
+                        // Site home = Grid + Solar + Battery (physics balance)
+                        // Grid signed (import-positive) = L_home - L_solar - L_batt
+                        let gridSigned = nextLeadHome - nextLeadSolar - nextLeadBatt
+                        nextHome = gridSigned + nextSolar + nextBattery
+                    }
+
                     let nextSOC = nextActions[leadId]?.batterySoc ?? nextActions.values.first?.batterySoc
-                    
-                    // Physics-based grid direction (same logic as existing)
-                    let expectedGrid = nextSolar + nextBattery - nextHome
+
+                    // Grid direction from lead's energy balance
+                    let gridSigned = nextLeadHome - nextLeadSolar - nextLeadBatt  // import-positive
+                    let calculatedGrid = -gridSigned  // export-positive convention
                     let reportedGridAbs = abs(nextGrid)
-                    let positiveError = abs(expectedGrid - reportedGridAbs)
-                    let negativeError = abs(expectedGrid - (-reportedGridAbs))
-                    let calculatedGrid = positiveError <= negativeError ? reportedGridAbs : -reportedGridAbs
-                    
+
                     alignedMeter = AlignedMeterData(
                         soc: nextSOC,
                         grid: reportedGridAbs,
@@ -621,7 +683,9 @@ struct ActionsTableView: View {
                 date: date,
                 leadAction: lead,
                 allActions: actionsDict,
-                expectedInverterCount: expectedCount
+                expectedInverterCount: expectedCount,
+                leadDischargeCapacity: leadInverter?.dischargeCapacityWatts,
+                leadChargeCapacity: leadInverter?.chargeCapacityWatts
             )
             combinedAction.alignedMeterData = alignedMeter
             
@@ -1049,34 +1113,38 @@ struct ActionBadge: View {
 // MARK: - Combined Action Detail Sheet (uses pre-fetched data)
 struct CombinedActionDetailSheet: View {
     let combined: CombinedAction
+    let nextCombinedAction: CombinedAction?  // For SOC-derived follower battery
     let siteInverters: [Inverter]
     let leadInverterId: Int?
     @EnvironmentObject var api: PowstonAPI
     @Environment(\.dismiss) var dismiss
     @State private var selectedValuesAction: InverterAction?  // For values explorer
-    
+    @State private var detailSnapshots: [Int: [ActionDetailSnapshot]] = [:]  // inverterId -> snapshots
+    @State private var isLoadingDetail = false
+    @State private var detailFetchFailed = false
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     // Header with timestamp and prices
                     headerSection
-                    
+
                     Divider()
-                    
+
                     // Combined summary
                     combinedSummarySection
-                    
+
                     Divider()
-                    
-                    // Individual inverter rows
+
+                    // Individual inverter register data (time-series or fallback)
                     individualInvertersSection
-                    
+
                     Divider()
-                    
+
                     // Reasons section
                     reasonsSection
-                    
+
                     Spacer()
                 }
                 .padding()
@@ -1088,6 +1156,35 @@ struct CombinedActionDetailSheet: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .task {
+                await fetchDetailSnapshots()
+            }
+        }
+    }
+
+    // MARK: - Fetch Detail Snapshots
+    private func fetchDetailSnapshots() async {
+        isLoadingDetail = true
+        defer { isLoadingDetail = false }
+
+        var anySuccess = false
+        // Fetch detail snapshots for each inverter in parallel
+        await withTaskGroup(of: (Int, [ActionDetailSnapshot]).self) { group in
+            for (inverterId, action) in combined.allActions {
+                group.addTask {
+                    let snapshots = await self.api.fetchActionDetail(actionId: action.id)
+                    return (inverterId, snapshots)
+                }
+            }
+            for await (inverterId, snapshots) in group {
+                if !snapshots.isEmpty {
+                    detailSnapshots[inverterId] = snapshots
+                    anySuccess = true
+                }
+            }
+        }
+        if !anySuccess {
+            detailFetchFailed = true
         }
     }
     
@@ -1145,26 +1242,131 @@ struct CombinedActionDetailSheet: View {
         return String(format: "%+.1f¢", cents)
     }
     
+    // MARK: - SOC-derived follower battery power
+    // The follower inverter's battery_power field is a SETPOINT (always multiples of 600W,
+    // often exceeds physical limits). Derive actual power from consecutive SOC readings:
+    //   F_batt = -(nextSOC - currentSOC)/100 × capacity_Wh / (5min/60min)
+    // Positive = discharge, negative = charge.
+
+    /// Battery power for non-lead inverters, derived from SOC change.
+    /// Returns nil if next interval data is unavailable.
+    private var followerDerivedBatteryPower: Double? {
+        guard let nextAction = nextCombinedAction else { return nil }
+        let leadId = leadInverterId ?? combined.allActions.keys.first ?? 0
+        var total = 0.0
+        var hasData = false
+        for inverter in siteInverters where inverter.id != leadId {
+            guard let currentSOC = combined.allActions[inverter.id]?.batterySoc,
+                  let nextSOC = nextAction.allActions[inverter.id]?.batterySoc,
+                  let capacity = inverter.batteryCapacity, capacity > 0 else { continue }
+            let power = -(nextSOC - currentSOC) / 100.0 * Double(capacity) / (5.0 / 60.0)
+            total += power
+            hasData = true
+        }
+        return hasData ? total : nil
+    }
+
+    // MARK: - Summary values
+    // Use aligned meter data (same source as the table row) so both views match exactly.
+    // Fall back to SOC-derived or raw action record values when aligned data unavailable.
+
+    var summarySolarPower: Double {
+        if let meter = combined.alignedMeterData, meter.hasData { return meter.solar }
+        return combined.combinedSolar
+    }
+
+    var summaryBatteryPower: Double {
+        if let meter = combined.alignedMeterData, meter.hasData { return meter.battery }
+        // Fallback: lead actual + SOC-derived follower
+        let leadId = leadInverterId ?? combined.allActions.keys.first ?? 0
+        let leadBatt = (combined.allActions[leadId] ?? combined.leadAction).batteryPower ?? 0
+        if let followerDerived = followerDerivedBatteryPower {
+            return leadBatt + followerDerived
+        }
+        return combined.combinedBattery
+    }
+
+    var summaryHomePower: Double {
+        if let meter = combined.alignedMeterData, meter.hasData { return meter.home }
+        // Fallback: lead home + follower contributions
+        let leadId = leadInverterId ?? combined.allActions.keys.first ?? 0
+        let leadHome = (combined.allActions[leadId] ?? combined.leadAction).housePower ?? 0
+        if let followerDerived = followerDerivedBatteryPower {
+            var fSolar = 0.0
+            for inverter in siteInverters where inverter.id != leadId {
+                fSolar += combined.allActions[inverter.id]?.solarPower ?? 0
+            }
+            return leadHome + fSolar + followerDerived
+        }
+        return leadHome
+    }
+
+    var summaryGridPower: Double {
+        if let meter = combined.alignedMeterData, meter.hasData { return meter.grid }
+        let leadId = leadInverterId ?? combined.allActions.keys.first ?? 0
+        return (combined.allActions[leadId] ?? combined.leadAction).gridPower ?? 0
+    }
+
+    var summaryCalculatedGrid: Double {
+        if let meter = combined.alignedMeterData, meter.hasData { return meter.calculatedGrid }
+        // Fallback: derive from lead's energy balance
+        let leadId = leadInverterId ?? combined.allActions.keys.first ?? 0
+        let leadAction = combined.allActions[leadId] ?? combined.leadAction
+        if followerDerivedBatteryPower != nil {
+            let lHome = leadAction.housePower ?? 0
+            let lSolar = leadAction.solarPower ?? 0
+            let lBatt = leadAction.batteryPower ?? 0
+            return -(lHome - lSolar - lBatt)
+        }
+        let expectedGrid = summarySolarPower + summaryBatteryPower - summaryHomePower
+        let reportedGridAbs = abs(summaryGridPower)
+        let positiveError = abs(expectedGrid - reportedGridAbs)
+        let negativeError = abs(expectedGrid - (-reportedGridAbs))
+        return positiveError <= negativeError ? reportedGridAbs : -reportedGridAbs
+    }
+
+    var summaryIsExporting: Bool {
+        if let meter = combined.alignedMeterData, meter.hasData { return meter.isGridExporting }
+        return summaryCalculatedGrid > 0
+    }
+
+    var summaryImbalance: Double {
+        summarySolarPower + summaryBatteryPower - summaryCalculatedGrid - summaryHomePower
+    }
+
+    var summaryImbalanceKw: Double { summaryImbalance / 1000 }
+
+    var summaryHasSignificantImbalance: Bool {
+        let totalPower = abs(summarySolarPower) + abs(summaryBatteryPower) + abs(summaryCalculatedGrid) + abs(summaryHomePower)
+        let threshold = totalPower * 0.03
+        return abs(summaryImbalance) > max(threshold, 500)
+    }
+
+    var summaryAdjustedHome: Double {
+        if let meter = combined.alignedMeterData, meter.hasData { return meter.home }
+        let expectedGrid = summarySolarPower + summaryBatteryPower - summaryHomePower
+        let homeAdj = summaryCalculatedGrid - expectedGrid
+        return summaryHomePower + homeAdj
+    }
+
     // MARK: - Combined Summary Section
     var combinedSummarySection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Summary")
                 .font(.caption.weight(.semibold))
                 .foregroundColor(.secondary)
-            
+
             HStack(spacing: 12) {
                 Text(combined.displayAction.uppercased())
                     .font(.headline.weight(.bold))
                     .foregroundColor(actionColor(for: combined.displayAction))
-                
-                // Use aligned meter data if available
-                let meter = combined.alignedMeterData
-                let isExporting = meter?.isGridExporting ?? combined.isGridExporting
-                let gridVal = meter?.calculatedGrid ?? combined.calculatedGrid
-                let solarVal = meter?.solar ?? combined.combinedSolar
-                let batteryVal = meter?.battery ?? combined.combinedBattery
-                let homeVal = meter?.home ?? combined.adjustedHome
-                
+
+                let isExporting = summaryIsExporting
+                let gridVal = summaryCalculatedGrid
+                let solarVal = summarySolarPower
+                let batteryVal = summaryBatteryPower
+                let homeVal = summaryAdjustedHome
+
                 HStack(spacing: 8) {
                     HStack(spacing: 2) {
                         Text(isExporting ? "Export" : "Import")
@@ -1172,21 +1374,21 @@ struct CombinedActionDetailSheet: View {
                         Text(String(format: "%.1f", abs(gridVal) / 1000))
                             .foregroundColor(isExporting ? .green : .blue)
                     }
-                    
+
                     HStack(spacing: 2) {
                         Text("Solar")
                             .foregroundColor(.secondary)
                         Text(String(format: "%.1f", solarVal / 1000))
                             .foregroundColor(.orange)
                     }
-                    
+
                     HStack(spacing: 2) {
                         Text(batteryVal > 0 ? "Dchg" : "Chg")
                             .foregroundColor(.secondary)
                         Text(String(format: "%.1f", abs(batteryVal) / 1000))
                             .foregroundColor(batteryVal > 0 ? .orange : .green)
                     }
-                    
+
                     HStack(spacing: 2) {
                         Text("Home")
                             .foregroundColor(.secondary)
@@ -1195,18 +1397,18 @@ struct CombinedActionDetailSheet: View {
                     }
                 }
                 .font(.subheadline)
-                
+
                 Spacer()
-                
-                let socVal = meter?.soc ?? combined.combinedSOC
+
+                let socVal = combined.alignedMeterData?.soc ?? combined.combinedSOC
                 Text(String(format: "%.0f%%", socVal))
                     .font(.headline.weight(.semibold))
                     .foregroundColor(.green)
             }
-            
+
             // Energy balance row (always shown)
             energyBalanceRow
-            
+
             // Note when grid flow contradicts action
             if hasGridFlowContradiction {
                 HStack(spacing: 6) {
@@ -1223,24 +1425,24 @@ struct CombinedActionDetailSheet: View {
         .background(Color.gray.opacity(0.05))
         .cornerRadius(8)
     }
-    
+
     // Check if grid flow contradicts the commanded action
     var hasGridFlowContradiction: Bool {
         let action = combined.displayAction.lowercased()
-        let isExporting = combined.alignedMeterData?.isGridExporting ?? combined.isGridExporting
-        
+        let isExporting = summaryIsExporting
+
         // Import action but actually exporting
         if action == "import" && isExporting { return true }
         // Export action but actually importing
         if action == "export" && !isExporting { return true }
-        
+
         return false
     }
-    
+
     var gridContradictionExplanation: String {
         let action = combined.displayAction.lowercased()
-        let isExporting = combined.alignedMeterData?.isGridExporting ?? combined.isGridExporting
-        
+        let isExporting = summaryIsExporting
+
         if action == "import" && isExporting {
             return "Solar exceeds battery + home capacity, excess must export"
         } else if action == "export" && !isExporting {
@@ -1248,27 +1450,27 @@ struct CombinedActionDetailSheet: View {
         }
         return ""
     }
-    
+
     // MARK: - Energy Balance Row
     var energyBalanceRow: some View {
-        let imbalance = combined.energyImbalanceKw
-        let isSignificant = combined.hasSignificantImbalance
-        
+        let imbalance = summaryImbalanceKw
+        let isSignificant = summaryHasSignificantImbalance
+
         return HStack(spacing: 8) {
             Image(systemName: "plusminus")
                 .font(.caption)
                 .foregroundColor(isSignificant ? .orange : .secondary)
-            
+
             Text("Balance")
                 .font(.caption)
                 .foregroundColor(.secondary)
-            
+
             Text(String(format: "%+.2f kW", imbalance))
                 .font(.caption.weight(.medium).monospacedDigit())
                 .foregroundColor(isSignificant ? .orange : .secondary)
-            
+
             Spacer()
-            
+
             Text(imbalance > 0 ? "unmetered gen (added to Home)" : "unmetered load (added to Home)")
                 .font(.caption2)
                 .foregroundColor(.secondary)
@@ -1278,11 +1480,181 @@ struct CombinedActionDetailSheet: View {
     
     // MARK: - Individual Inverters Section
     var individualInvertersSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Raw Inverter Data")
+        let leadId = leadInverterId ?? combined.allActions.keys.first ?? 0
+        let hasAnySnapshots = !detailSnapshots.isEmpty
+
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Inverter Registers")
                 .font(.caption.weight(.semibold))
                 .foregroundColor(.secondary)
-            
+
+            if isLoadingDetail {
+                HStack {
+                    Spacer()
+                    ProgressView("Loading register data...")
+                        .font(.caption)
+                    Spacer()
+                }
+                .padding(.vertical, 20)
+            } else if hasAnySnapshots {
+                // Show each inverter's time-series snapshots
+                ForEach(sortedInverters, id: \.id) { inverter in
+                    let isLead = inverter.id == leadId
+                    if let snapshots = detailSnapshots[inverter.id], !snapshots.isEmpty {
+                        inverterDetailSection(
+                            inverter: inverter,
+                            snapshots: snapshots,
+                            isLead: isLead
+                        )
+                        if inverter.id != sortedInverters.last?.id {
+                            Divider().padding(.vertical, 4)
+                        }
+                    }
+                }
+
+                // Explanation: register snapshots vs summary
+                registerVsSummaryNote
+            } else {
+                // Fallback to single-snapshot display
+                inverterFallbackSection
+            }
+        }
+    }
+
+    // MARK: - Inverter time-series detail
+    /// Lead: Grid, Solar, Batt, Home, SOC (Grid/Home from site CT clamp)
+    /// Follower: Solar, Batt, SOC only (no CT clamp — Grid/Home not meaningful)
+    func inverterDetailSection(inverter: Inverter, snapshots: [ActionDetailSnapshot], isLead: Bool) -> some View {
+        let serial = String(inverter.serialNumber.suffix(4))
+        let timeFormatter: DateFormatter = {
+            let f = DateFormatter()
+            f.timeZone = powstonTimezone()
+            f.dateFormat = "h:mm"
+            return f
+        }()
+
+        return VStack(alignment: .leading, spacing: 4) {
+            // Header
+            HStack(spacing: 4) {
+                if isLead {
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(.yellow)
+                }
+                Text(serial)
+                    .font(.subheadline.weight(.medium))
+                if isLead && siteInverters.count > 1 {
+                    Text("lead")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                Text("\(snapshots.count) reads")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            // Column headers — same layout for all inverters so columns align
+            HStack(spacing: 0) {
+                Text("Time")
+                    .frame(width: 50, alignment: .leading)
+                Text("Grid")
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                Text("Solar")
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                Text("Batt")
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                Text("Home")
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                Text("SOC")
+                    .frame(width: 45, alignment: .trailing)
+            }
+            .font(.caption2.weight(.medium))
+            .foregroundColor(.secondary)
+
+            ForEach(snapshots) { snapshot in
+                HStack(spacing: 0) {
+                    Text(timeFormatter.string(from: snapshot.time))
+                        .frame(width: 50, alignment: .leading)
+
+                    // Grid — lead has site CT clamp, follower shows dash
+                    if isLead, let grid = snapshot.gridPower {
+                        Text(String(format: "%.1f", abs(grid) / 1000))
+                            .foregroundColor(grid >= 0 ? .green : .blue)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    } else {
+                        Text(isLead ? "–" : "")
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+
+                    // Solar
+                    if let solar = snapshot.solarPower {
+                        Text(String(format: "%.1f", solar / 1000))
+                            .foregroundColor(.orange)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    } else {
+                        Text("–")
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+
+                    // Battery
+                    if let battery = snapshot.batteryPower {
+                        Text(String(format: "%.1f", abs(battery) / 1000))
+                            .foregroundColor(battery > 0 ? .orange : .green)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    } else {
+                        Text("–")
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+
+                    // Home — lead has site CT clamp, follower shows dash
+                    if isLead, let home = snapshot.housePower {
+                        Text(String(format: "%.1f", abs(home) / 1000))
+                            .foregroundColor(.purple)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    } else {
+                        Text(isLead ? "–" : "")
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+
+                    // SOC
+                    if let soc = snapshot.batterySoc {
+                        Text(String(format: "%.0f%%", soc))
+                            .foregroundColor(.green)
+                            .frame(width: 45, alignment: .trailing)
+                    } else {
+                        Text("–")
+                            .foregroundColor(.secondary)
+                            .frame(width: 45, alignment: .trailing)
+                    }
+                }
+                .font(.system(size: 14, design: .monospaced))
+            }
+        }
+    }
+
+    // MARK: - Register vs Summary explanation
+    var registerVsSummaryNote: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if siteInverters.count > 1 {
+                Text("Grid and Home from lead's site meter only")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            Text("Registers are instantaneous snapshots; Summary is the 5-min interval average")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        }
+        .padding(.top, 6)
+    }
+
+    // MARK: - Fallback single-snapshot display (when detail fetch fails)
+    var inverterFallbackSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 0) {
                 Text("Action")
                     .frame(width: 65, alignment: .leading)
@@ -1301,30 +1673,23 @@ struct CombinedActionDetailSheet: View {
             }
             .font(.caption2.weight(.medium))
             .foregroundColor(.secondary)
-            
+
             ForEach(sortedInverters, id: \.id) { inverter in
-                inverterRow(for: inverter)
+                inverterFallbackRow(for: inverter)
             }
         }
     }
-    
-    func inverterRow(for inverter: Inverter) -> some View {
+
+    func inverterFallbackRow(for inverter: Inverter) -> some View {
         let invAction = combined.allActions[inverter.id]
         let isLead = inverter.id == leadInverterId
         let serial = String(inverter.serialNumber.suffix(4))
         let isMissing = invAction == nil || !(invAction?.hasMeaningfulData ?? false)
-
-        // For non-lead inverters, try to get values from nestedInverterData
-        // The nested data is keyed by the full serial number (e.g., "A23B0200864")
         let nestedData = invAction?.nestedInverterData?[inverter.serialNumber]
-
-        // Use nested data for non-lead inverters when available, otherwise fall back to action values
-        // For lead inverter, always use top-level values (they're the same as what's in runtime_params)
         let displaySOC: Double? = isLead ? invAction?.batterySoc : (nestedData?.batterySoc ?? invAction?.batterySoc)
-        let displayGrid: Double? = isLead ? invAction?.gridPower : (nestedData?.gridPower ?? 0)  // Follower has no grid meter
+        let displayGrid: Double? = isLead ? invAction?.gridPower : (nestedData?.gridPower ?? 0)
         let displaySolar: Double? = isLead ? invAction?.solarPower : (nestedData?.solarPower ?? invAction?.solarPower)
         let displayBattery: Double? = isLead ? invAction?.batteryPower : (nestedData?.batteryPower ?? invAction?.batteryPower)
-        // Home power is only meaningful for lead inverter (it's a calculated value from grid meter)
         let displayHome: Double? = isLead ? invAction?.housePower : nil
 
         return HStack(spacing: 0) {
@@ -1344,7 +1709,6 @@ struct CombinedActionDetailSheet: View {
                     .foregroundColor(combined.isGridExporting ? .green : .blue)
                     .frame(width: 52, alignment: .trailing)
             } else if !isLead {
-                // Follower inverter doesn't have grid meter - show dash
                 Text("–")
                     .font(.system(size: 16))
                     .foregroundColor(.secondary)
@@ -1377,7 +1741,6 @@ struct CombinedActionDetailSheet: View {
                     .foregroundColor(.purple)
                     .frame(width: 52, alignment: .trailing)
             } else if !isLead {
-                // Follower doesn't have meaningful home power (derived from grid meter)
                 Text("–")
                     .font(.system(size: 16))
                     .foregroundColor(.secondary)

@@ -201,7 +201,7 @@ class UnfilledOpportunityAnalysis: ObservableObject {
             let latest = opps.map { $0.periodEnd }.max() ?? now
             let formatter = DateFormatter()
             formatter.dateFormat = "HH:mm"
-            formatter.timeZone = TimeZone(identifier: "Australia/Brisbane")
+            formatter.timeZone = powstonTimezone()
             let periodDesc = "\(formatter.string(from: earliest))–\(formatter.string(from: latest)) today"
 
             self.currentAlert = OpportunityAlert(

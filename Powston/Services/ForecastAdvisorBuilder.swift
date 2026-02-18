@@ -257,10 +257,10 @@ class ForecastAdvisorBuilder {
         let now = Date()
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
-        formatter.timeZone = TimeZone(identifier: "Australia/Brisbane")
-        
+        formatter.timeZone = powstonTimezone()
+
         let calendar = Calendar.current
-        
+
         // Each period is 30 minutes
         let periodCount = min(buyForecast.count, sellForecast.count, 24)  // Max 12 hours
         

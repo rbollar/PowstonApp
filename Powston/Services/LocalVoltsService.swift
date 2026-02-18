@@ -565,13 +565,22 @@ class LocalVoltsService: ObservableObject {
         socketClient?.requestAllOrders(from: startDate, to: endDate)
 
         // Poll for data response (up to 30 seconds, checking every 2 seconds)
+        // Wait for both directions: after first response, allow extra time for the second
+        var firstResponseAt: Int?
         for attempt in 1...15 {
             try await Task.sleep(nanoseconds: 2_000_000_000)  // 2s between checks
             if !receivedOrders.isEmpty {
-                print("✅ Received \(receivedOrders.count) orders after \(attempt * 2)s")
-                break
+                if firstResponseAt == nil {
+                    firstResponseAt = attempt
+                    print("📥 First orders received (\(receivedOrders.count)) after \(attempt * 2)s, waiting for both directions...")
+                }
+                // Wait at least 4 more seconds after first response for second direction
+                if attempt >= (firstResponseAt ?? attempt) + 2 {
+                    print("✅ Received \(receivedOrders.count) orders total after \(attempt * 2)s")
+                    break
+                }
             }
-            if attempt < 15 {
+            if attempt < 15 && receivedOrders.isEmpty {
                 print("⏳ Waiting for TradeList data... (\(attempt * 2)s)")
             }
         }
@@ -583,9 +592,18 @@ class LocalVoltsService: ObservableObject {
             return []
         }
 
-        // Save to database
+        // Save to database and clean up stale orders
         do {
             try dataStore.saveLVOrders(receivedOrders)
+
+            // Remove orders that are no longer in the API response
+            // This handles cancelled/expired orders that LocalVolts no longer returns
+            let freshIds = Set(receivedOrders.map { $0.id })
+            let removed = try dataStore.removeStaleOrders(siteId: siteId, keepIds: freshIds)
+            if removed > 0 {
+                print("🗑️ Removed \(removed) stale orders no longer in API response")
+            }
+
             dataStore.setLastLVOrdersSyncTime(siteId: siteId)
             lastOrdersFetchTime = Date()
 

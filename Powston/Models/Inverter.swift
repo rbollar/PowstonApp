@@ -20,7 +20,21 @@ struct Inverter: Codable, Identifiable {
     let siteName: String?  // Optional - API can return null
     let pvCapacity: Int?
     let phases: Int?
-    
+    let bdcRatedPower: Int?      // Battery discharge rated power (watts)
+    let batteryPower: Int?       // Battery power capacity (watts)
+    let maxDischarging: Int?     // Max discharge power (watts)
+    let maxCharging: Int?        // Max charge power (watts)
+
+    /// The inverter's discharge capacity in watts, from the best available field
+    var dischargeCapacityWatts: Int {
+        bdcRatedPower ?? batteryPower ?? maxDischarging ?? 5000
+    }
+
+    /// The inverter's charge capacity in watts
+    var chargeCapacityWatts: Int {
+        maxCharging ?? batteryPower ?? bdcRatedPower ?? 5000
+    }
+
     enum CodingKeys: String, CodingKey {
         case id
         case serialNumber = "serial_number"
@@ -31,5 +45,9 @@ struct Inverter: Codable, Identifiable {
         case siteName = "site_name"
         case pvCapacity = "pv_capacity"
         case phases
+        case bdcRatedPower = "bdc_rated_power"
+        case batteryPower = "battery_power"
+        case maxDischarging = "max_discharging"
+        case maxCharging = "max_charging"
     }
 }

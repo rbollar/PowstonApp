@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import SwiftUI
 
 // MARK: - User Coupon
 struct UserCoupon: Codable, Identifiable {
@@ -34,6 +35,8 @@ struct Site: Codable, Identifiable {
     let network: String?
     let installedSolar: Int?
     let installedBattery: Int?
+    let windPower: Int?
+    let hydroPower: Int?
     let primaryInverterId: Int?
     let latitude: Double?
     let longitude: Double?
@@ -62,12 +65,14 @@ struct Site: Codable, Identifiable {
     let localvoltsKey: String?
     let localvoltsPartnerId: String?
     let marketCosts: Double?
-    
+
     enum CodingKeys: String, CodingKey {
         case id, name, state, network, latitude, longitude, location, postcode, timezone, brand, nmi, tariff, controlled
         case displayName = "display_name"
         case installedSolar = "installed_solar"
         case installedBattery = "installed_battery"
+        case windPower = "wind_power"
+        case hydroPower = "hydro_power"
         case primaryInverterId = "primary_inverter_id"
         case exportTariff = "export_tariff"
         case gridPowerLimit = "grid_power_limit"
@@ -87,5 +92,55 @@ struct Site: Codable, Identifiable {
         case localvoltsKey = "localvolts_key"
         case localvoltsPartnerId = "localvolts_partner_id"
         case marketCosts = "market_costs"
+    }
+
+    // MARK: - Generation Type
+
+    var hasSolar: Bool { (installedSolar ?? 0) > 0 }
+    var hasWind: Bool { (windPower ?? 0) > 0 }
+    var hasHydro: Bool { (hydroPower ?? 0) > 0 }
+
+    /// Icon for the site's generation source(s)
+    var generationIcon: String {
+        let sources = [hasSolar, hasWind, hasHydro].filter { $0 }.count
+        if sources > 1 { return "leaf.fill" }
+        if hasWind { return "wind" }
+        if hasHydro { return "drop.fill" }
+        return "sun.max.fill" // default to solar
+    }
+
+    /// Color for the generation icon
+    var generationColor: Color {
+        let sources = [hasSolar, hasWind, hasHydro].filter { $0 }.count
+        if sources > 1 { return .green }
+        if hasWind { return .cyan }
+        if hasHydro { return .blue }
+        return .yellow // solar default
+    }
+
+    /// Label for generation savings/cost in analysis
+    func generationLabel(isSavings: Bool) -> String {
+        let sources = [hasSolar, hasWind, hasHydro].filter { $0 }.count
+        let type: String
+        if sources > 1 {
+            type = "Generation"
+        } else if hasWind {
+            type = "Wind"
+        } else if hasHydro {
+            type = "Hydro"
+        } else {
+            type = "Solar"
+        }
+        return isSavings ? "\(type) savings:" : "\(type) cost:"
+    }
+
+    /// Short description of generation type for UI messages (e.g. "Hydro site", "Wind site")
+    var generationTypeLabel: String {
+        let sources = [hasSolar, hasWind, hasHydro].filter { $0 }.count
+        if sources > 1 { return "Renewable site" }
+        if hasWind { return "Wind site" }
+        if hasHydro { return "Hydro site" }
+        if hasSolar { return "Solar site" }
+        return "Site"
     }
 }

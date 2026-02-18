@@ -103,10 +103,10 @@ class BargainHunterAnalysis: ObservableObject {
         progress = "Categorizing results..."
         let expensiveImports = analyzedImports.filter { $0.isExpensive }
         let cheapImports = analyzedImports.filter { !$0.isExpensive }
-        
+
         // Build breakdown
         let breakdown = buildBreakdown(expensiveImports: expensiveImports)
-        
+
         // Extract actionable samples (Best-N failures sorted by overpaid, deduped by timestamp)
         var seenTimestamps: Set<Date> = []
         let couldHaveWaited = expensiveImports
@@ -121,16 +121,23 @@ class BargainHunterAnalysis: ObservableObject {
             }
             .prefix(10)
             .map { toBargainHunterSample($0) }
-        
+
         // By hour analysis
         let byHour = analyzeByHour(expensiveImports: expensiveImports, config: config)
-        
+
         // By priority analysis
         let byPriority = analyzeByPriority(expensiveImports: expensiveImports)
-        
-        // Calculate potential savings from fixing Best-N
+
+        // Calculate capacity-constrained potential savings
+        // The naive approach counts every "could wait" import, but the cheap periods
+        // only have limited capacity (non-import periods). Cap savings per day to
+        // the N most expensive "could wait" imports where N = cheap non-import periods that day.
         let bestNFailures = expensiveImports.filter { $0.category == .bestNFailure }
-        let potentialSavingsCents = bestNFailures.reduce(0.0) { $0 + $1.overpaidCents }
+        let potentialSavingsCents = calculateCapacityAdjustedSavings(
+            bestNFailures: bestNFailures,
+            allRecords: allRecords,
+            config: config
+        )
         
         // Calculate score/grade
         let (score, grade) = calculateGrade(
@@ -361,7 +368,61 @@ class BargainHunterAnalysis: ObservableObject {
             noForecast: noForecast
         )
     }
-    
+
+    // MARK: - Capacity-Adjusted Savings
+
+    /// Cap "could wait" savings by the actual number of cheap non-import periods available.
+    /// The naive approach marks every import that individually could have waited, but the cheap
+    /// periods have limited capacity. Per day: count cheap non-import periods before deadline,
+    /// then only the N most expensive "could wait" imports count as real savings.
+    private func calculateCapacityAdjustedSavings(
+        bestNFailures: [AnalyzedImport],
+        allRecords: [ActionRecord],
+        config: AnalysisConfig
+    ) -> Double {
+        guard !bestNFailures.isEmpty else { return 0 }
+
+        var calendar = Calendar.current
+        calendar.timeZone = config.timezone
+
+        // Group best-N failures by day
+        var failuresByDay: [DateComponents: [AnalyzedImport]] = [:]
+        for imp in bestNFailures {
+            let dayComps = calendar.dateComponents([.year, .month, .day], from: imp.context.timestamp)
+            failuresByDay[dayComps, default: []].append(imp)
+        }
+
+        // Count cheap non-import periods per day (periods with price ≤ cheapThreshold and no import)
+        var cheapSlotsByDay: [DateComponents: Int] = [:]
+        for record in allRecords {
+            let dayComps = calendar.dateComponents([.year, .month, .day], from: record.intervalTime)
+            // Only count non-import periods with cheap buy price, before the deadline hour
+            let hour = calendar.component(.hour, from: record.intervalTime)
+            guard hour < config.peakStartHour else { continue }
+            let isImport = record.isImport && (record.energyImport ?? 0) > 0.01
+            let buyPrice = record.buyPrice ?? 999
+            if !isImport && buyPrice <= Self.cheapThreshold {
+                cheapSlotsByDay[dayComps, default: 0] += 1
+            }
+        }
+
+        // For each day, cap savings to the N most expensive failures where N = cheap slots
+        var totalAdjustedSavings: Double = 0
+        for (day, failures) in failuresByDay {
+            let cheapSlots = cheapSlotsByDay[day] ?? 0
+            guard cheapSlots > 0 else { continue }  // No cheap capacity this day
+
+            // Take only the N most expensive failures (highest overpaid first)
+            let sorted = failures.sorted { $0.overpaidCents > $1.overpaidCents }
+            let capped = sorted.prefix(cheapSlots)
+            totalAdjustedSavings += capped.reduce(0.0) { $0 + $1.overpaidCents }
+        }
+
+        print("🏷️ Capacity-adjusted savings: \(String(format: "%.1f", totalAdjustedSavings))¢ (naive: \(String(format: "%.1f", bestNFailures.reduce(0.0) { $0 + $1.overpaidCents }))¢)")
+        return totalAdjustedSavings
+    }
+
+
     // MARK: - By Hour Analysis
     
     private func analyzeByHour(expensiveImports: [AnalyzedImport], config: AnalysisConfig) -> [HourStats] {

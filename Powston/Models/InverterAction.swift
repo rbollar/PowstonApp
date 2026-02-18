@@ -40,6 +40,8 @@ struct InverterAction: Identifiable, Codable {
     var solarPower: Double?
     var housePower: Double?
     var batteryPower: Double?
+    var optimalDischarging: Double?  // Watts - algorithm's discharge setpoint
+    var optimalCharging: Double?     // Watts - algorithm's charge setpoint
     
     // For multi-inverter support
     var inverterSerial: String?
@@ -122,6 +124,8 @@ struct InverterAction: Identifiable, Codable {
                     housePower = values["house_power"] as? Double
                     batteryPower = values["battery_power"] as? Double
                     batterySoc = values["battery_soc"] as? Double
+                    optimalDischarging = values["optimal_discharging"] as? Double
+                    optimalCharging = values["optimal_charging"] as? Double
                     inverterSerial = values["serial_number"] as? String
                     
                     // Check runtime_params for more detailed data
@@ -141,7 +145,13 @@ struct InverterAction: Identifiable, Codable {
                         if batteryPower == nil {
                             batteryPower = runtimeParams["battery_power"] as? Double
                         }
-                        
+                        if optimalDischarging == nil {
+                            optimalDischarging = runtimeParams["optimal_discharging"] as? Double
+                        }
+                        if optimalCharging == nil {
+                            optimalCharging = runtimeParams["optimal_charging"] as? Double
+                        }
+
                         // Extract nested inverter data (for multi-inverter sites)
                         var nested: [String: NestedInverterSOC] = [:]
                         for (key, value) in runtimeParams {
@@ -152,14 +162,16 @@ struct InverterAction: Identifiable, Codable {
                                 let solar = inverterData["solar_power"] as? Double ?? inverterData["ppv"] as? Double
                                 let battery = inverterData["battery_power"] as? Double
                                 let capacity = inverterData["battery_capacity"] as? Double
-                                
+                                let house = inverterData["house_power"] as? Double
+
                                 nested[key] = NestedInverterSOC(
                                     serialNumber: key,
                                     batterySoc: soc,
                                     gridPower: grid,
                                     solarPower: solar,
                                     batteryPower: battery,
-                                    batteryCapacity: capacity
+                                    batteryCapacity: capacity,
+                                    housePower: house
                                 )
                             }
                         }
@@ -203,7 +215,9 @@ struct InverterAction: Identifiable, Codable {
                 housePower = values["house_power"] as? Double
                 batteryPower = values["battery_power"] as? Double
                 batterySoc = values["battery_soc"] as? Double
-                
+                optimalDischarging = values["optimal_discharging"] as? Double
+                optimalCharging = values["optimal_charging"] as? Double
+
                 // Check runtime_params for more detailed data
                 if let runtimeParams = values["runtime_params"] as? [String: Any] {
                     // Main inverter values
@@ -222,12 +236,30 @@ struct InverterAction: Identifiable, Codable {
                     if batteryPower == nil {
                         batteryPower = runtimeParams["battery_power"] as? Double
                     }
+                    if optimalDischarging == nil {
+                        optimalDischarging = runtimeParams["optimal_discharging"] as? Double
+                    }
+                    if optimalCharging == nil {
+                        optimalCharging = runtimeParams["optimal_charging"] as? Double
+                    }
                 }
             }
         } catch {
             print("⚠️ Failed to parse action values: \(error)")
         }
     }
+}
+
+// MARK: - Action Detail Snapshot (from /api/inverter_action_details endpoint)
+/// A single register read from runtime_data, representing one moment within a 5-minute interval
+struct ActionDetailSnapshot: Identifiable {
+    let id = UUID()
+    let time: Date
+    let gridPower: Double?
+    let solarPower: Double?
+    let batteryPower: Double?
+    let housePower: Double?
+    let batterySoc: Double?
 }
 
 // MARK: - Nested Inverter Data (for multi-inverter sites)
@@ -238,6 +270,7 @@ struct NestedInverterSOC: Codable {
     let solarPower: Double?
     let batteryPower: Double?
     let batteryCapacity: Double?
+    let housePower: Double?
 }
 
 // MARK: - Lightweight SOC Point (for charting)
@@ -428,15 +461,48 @@ extension InverterAction {
     }
     
     // Simplified action name for display
+    // For export actions, compares optimal_discharging against inverter's rated power
+    // to distinguish Trickle vs P2P Export vs normal Export
     var displayAction: String {
+        displayAction(dischargeCapacityWatts: nil, chargeCapacityWatts: nil)
+    }
+
+    /// Display action with inverter context for accurate P2P detection
+    func displayAction(dischargeCapacityWatts: Int?, chargeCapacityWatts: Int? = nil) -> String {
         let lower = action.lowercased()
         if lower.contains("curtail") { return "Curtail" }
-        if lower.contains("export") { return "Export" }
-        if lower.contains("import") { return "Import" }
+        if lower.contains("export") { return exportDisplayLabel(ratedWatts: dischargeCapacityWatts) }
+        if lower.contains("import") { return importDisplayLabel(ratedWatts: chargeCapacityWatts) }
         if lower.contains("charge") { return "Charge" }
         if lower.contains("discharge") { return "Discharge" }
         if lower.contains("auto") { return "Auto" }
         return action
+    }
+
+    /// Distinguish Trickle / P2P Exp / Export using optimal_discharging vs rated power
+    private func exportDisplayLabel(ratedWatts: Int?) -> String {
+        guard let od = optimalDischarging, od > 0 else { return "Export" }
+        if let rated = ratedWatts, od >= Double(rated) { return "Export" }
+        return od > 1000 ? "P2P Exp" : "Trickle"
+    }
+
+    /// Distinguish Curtail / P2P Imp / Import using optimal_charging vs rated power
+    private func importDisplayLabel(ratedWatts: Int?) -> String {
+        guard let oc = optimalCharging, oc > 0 else { return "Import" }
+        if let rated = ratedWatts, oc >= Double(rated) { return "Import" }
+        return oc > 1000 ? "P2P Imp" : "Curtail"
+    }
+
+    /// Normalized action category for color/icon matching (stable, not for display)
+    var actionCategory: String {
+        let lower = action.lowercased()
+        if lower.contains("curtail") { return "curtail" }
+        if lower.contains("export") { return "export" }
+        if lower.contains("import") { return "import" }
+        if lower.contains("charge") { return "charge" }
+        if lower.contains("discharge") { return "discharge" }
+        if lower.contains("auto") { return "auto" }
+        return lower
     }
     
     // First line of reason (summary)

@@ -208,10 +208,22 @@ struct PricesView: View {
                 }
                 .toolbar(isLandscape ? .hidden : .visible, for: .tabBar)
             } else {
-                VStack {
-                    Text("No data")
+                VStack(spacing: 16) {
+                    Image(systemName: "chart.line.downtrend.xyaxis")
+                        .font(.system(size: 40))
                         .foregroundColor(.secondary)
+                    if let site = api.selectedSite, api.selectedInverterId == 0 {
+                        Text("Price forecasts require inverter data")
+                            .foregroundColor(.secondary)
+                        Text("\(site.generationTypeLabel) — no inverter connected")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("No data")
+                            .foregroundColor(.secondary)
+                    }
                 }
+                .padding(.top, 100)
                 .navigationTitle(api.isDemoMode ? "Prices (Demo)" : "Prices")
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {

@@ -10,6 +10,7 @@ struct DecisionsView: View {
     @Environment(\.verticalSizeClass) var verticalSizeClass
     @StateObject private var orientationManager = OrientationManager.shared
     @AppStorage("scorecard_enabled") private var scorecardEnabled: Bool = true
+    @AppStorage("show_experimental_features") private var showExperimentalFeatures: Bool = false
     @State private var showDecisionTrace = false
     
     var isLandscape: Bool {
@@ -31,6 +32,58 @@ struct DecisionsView: View {
                     }
                     .animation(.none, value: isLandscape)
                     .toolbar(isLandscape ? .hidden : .visible, for: .tabBar)
+                } else if api.selectedSite != nil && !api.apiKey.isEmpty {
+                    // Zero-inverter site — show what works without inverter data
+                    ScrollView {
+                        VStack(spacing: 16) {
+                            // Info banner
+                            HStack {
+                                if let site = api.selectedSite {
+                                    Image(systemName: site.generationIcon)
+                                        .foregroundColor(site.generationColor)
+                                    Text("\(site.generationTypeLabel) — live decisions not available")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .padding()
+                            .background((api.selectedSite?.generationColor ?? .blue).opacity(0.1))
+                            .cornerRadius(12)
+
+                            // Scorecard (uses meter_records)
+                            if scorecardEnabled {
+                                NavigationLink(destination: ScorecardView()) {
+                                    HStack {
+                                        Image(systemName: "gauge.with.dots.needle.33percent")
+                                            .font(.title3)
+                                            .foregroundColor(.cyan)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("Performance Scorecard")
+                                                .font(.subheadline)
+                                                .fontWeight(.medium)
+                                            Text("View detailed analysis")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        Spacer()
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .padding()
+                                    .background(Color.gray.opacity(0.05))
+                                    .cornerRadius(12)
+                                }
+                                .buttonStyle(.plain)
+                            }
+
+                            // Profit Intelligence (uses meter_records / site_id)
+                            if !api.isDemoMode {
+                                ProfitIntelligenceCard()
+                            }
+                        }
+                        .padding()
+                    }
                 } else {
                     VStack(spacing: 12) {
                         Image(systemName: "brain")
@@ -66,11 +119,10 @@ struct DecisionsView: View {
                 // SOC & Price Chart (24h context)
                 DecisionsChartCard()
 
-                // Strategy / Action Items (informs future decisions)
-                // TODO: Re-enable when estimates are validated
-                // if !api.isDemoMode {
-                //     ActionItemsDashboardCard()
-                // }
+                // Strategy / Action Items (experimental - hidden by default)
+                if showExperimentalFeatures && !api.isDemoMode {
+                    ActionItemsDashboardCard()
+                }
 
                 // Scorecard link (informs future decisions)
                 if scorecardEnabled {
@@ -236,7 +288,7 @@ struct DecisionsView: View {
                             Text("Current Action")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                            Text(displayAction(d.currentAction).uppercased())
+                            Text(displayAction(d.currentAction, gridKw: d.gridKw).uppercased())
                                 .font(.title2.weight(.bold))
                                 .foregroundColor(actionColor(d.currentAction))
                             Text(snapshotTimeText(d))
@@ -359,7 +411,7 @@ struct DecisionsView: View {
         } else if api.hasScheduledOverride, let firstScheduled = api.scheduledOverrides.first {
             return "Scheduled override: \(firstScheduled.action), starts \(firstScheduled.formattedStartsIn)"
         } else {
-            return "Current action: \(displayAction(d.currentAction))"
+            return "Current action: \(displayAction(d.currentAction, gridKw: d.gridKw))"
         }
     }
     
@@ -374,7 +426,9 @@ struct DecisionsView: View {
         return "Snapshot time unavailable"
     }
     
-    func displayAction(_ action: String) -> String {
+    /// Display action label. For export actions, just shows "export" — real-time data
+    /// lacks optimal_discharging so we can't reliably distinguish trickle/p2p here.
+    func displayAction(_ action: String, gridKw: Double? = nil) -> String {
         let lower = action.lowercased()
         if lower.contains("curtail") { return "curtail" }
         if lower.contains("export") { return "export" }
@@ -384,10 +438,21 @@ struct DecisionsView: View {
         if lower.contains("auto") { return "auto" }
         return action
     }
-    
+
+    /// Normalized action category for color/icon matching
+    private func actionCategory(_ action: String) -> String {
+        let lower = action.lowercased()
+        if lower.contains("curtail") { return "curtail" }
+        if lower.contains("export") { return "export" }
+        if lower.contains("import") { return "import" }
+        if lower.contains("charge") { return "charge" }
+        if lower.contains("discharge") { return "discharge" }
+        if lower.contains("auto") { return "auto" }
+        return lower
+    }
+
     func actionColor(_ action: String) -> Color {
-        let simplified = displayAction(action).lowercased()
-        switch simplified {
+        switch actionCategory(action) {
         case "import", "charge": return .blue
         case "export", "discharge": return .green
         case "curtail": return .orange
@@ -395,10 +460,9 @@ struct DecisionsView: View {
         default: return .gray
         }
     }
-    
+
     func actionIcon(_ action: String) -> String {
-        let simplified = displayAction(action).lowercased()
-        switch simplified {
+        switch actionCategory(action) {
         case "import": return "arrow.down.circle.fill"
         case "export": return "arrow.up.circle.fill"
         case "charge": return "battery.100.bolt"
