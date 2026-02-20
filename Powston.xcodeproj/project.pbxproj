@@ -134,8 +134,10 @@
 		9C84D7F597E93B64B9E9FFC6 /* LiveActivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F74F0A456B681D842270C35A /* LiveActivityManager.swift */; };
 		9F3666F2610E2AAE6C3FA502 /* SavingsBreakdownAnalysis.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF61C97E7BB26B556936732B /* SavingsBreakdownAnalysis.swift */; };
 		A4C806607D785A96398EF15A /* PowstonDataStore+LVTrades.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF4A81D725E0AAF49F9F4C97 /* PowstonDataStore+LVTrades.swift */; };
+		A4D917829F907C18510GF2B4 /* PowstonDataStore+LVSettlement.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF5B93F947F2CCG6B1B16E09 /* PowstonDataStore+LVSettlement.swift */; };
 		A5D917718E896B07509FE1A3 /* PowstonDataStore+LVOrders.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF5B92E836F1BBF5A0A05D08 /* PowstonDataStore+LVOrders.swift */; };
 		ABA7169E4B30B58750683542 /* LVIntervalTrade.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FCB7A3BD3231A487280C8D7 /* LVIntervalTrade.swift */; };
+		ABBA0C1E5D42D7A862895F31 /* LVSettlementRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FCD9B5DE5453C6A9392E2F8 /* LVSettlementRecord.swift */; };
 		ABB8270F5C31C69851784653 /* LVOrder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FDC8B4CE4342B598391D9E8 /* LVOrder.swift */; };
 		AED7E5A0A600CDB410F4BFBC /* PowstonDataStore+P2PContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF329E21AFC5EC5CB9CC7F5A /* PowstonDataStore+P2PContracts.swift */; };
 		AF221364175FA8234597F5FE /* IntelligentSummaryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FD8E5200E409E6B924F93F7 /* IntelligentSummaryService.swift */; };
@@ -259,6 +261,7 @@
 		0BBD0505FD62A872C3BB67A8 /* ActionRecord+InverterAction.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "ActionRecord+InverterAction.swift"; sourceTree = "<group>"; };
 		0C6BE7030FBD77E96653DAB3 /* LVMarketOverviewView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LVMarketOverviewView.swift; path = Views/Components/LVMarketOverviewView.swift; sourceTree = "<group>"; };
 		0FCB7A3BD3231A487280C8D7 /* LVIntervalTrade.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LVIntervalTrade.swift; sourceTree = "<group>"; };
+		0FCD9B5DE5453C6A9392E2F8 /* LVSettlementRecord.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LVSettlementRecord.swift; sourceTree = "<group>"; };
 		0FDC8B4CE4342B598391D9E8 /* LVOrder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LVOrder.swift; sourceTree = "<group>"; };
 		1052E6A5FD0F16D8F435FF47 /* ProfitIntelligenceCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ProfitIntelligenceCard.swift; sourceTree = "<group>"; };
 		11165146645E2FC2C9C78EAD /* P2PCounterpartyTrade.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = P2PCounterpartyTrade.swift; sourceTree = "<group>"; };
@@ -415,6 +418,7 @@
 		ED1AE4C1F2D8149D69A7858F /* P2PCounterpartyMapView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = P2PCounterpartyMapView.swift; sourceTree = "<group>"; };
 		F74F0A456B681D842270C35A /* LiveActivityManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LiveActivityManager.swift; sourceTree = "<group>"; };
 		FF4A81D725E0AAF49F9F4C97 /* PowstonDataStore+LVTrades.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "PowstonDataStore+LVTrades.swift"; sourceTree = "<group>"; };
+		FF5B93F947F2CCG6B1B16E09 /* PowstonDataStore+LVSettlement.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "PowstonDataStore+LVSettlement.swift"; sourceTree = "<group>"; };
 		FF5B92E836F1BBF5A0A05D08 /* PowstonDataStore+LVOrders.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "PowstonDataStore+LVOrders.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -653,6 +657,7 @@
 				99034EF4561192A5259A42AF /* AnalysisCacheEntry.swift */,
 				A8964EF34970513CAA1FB3C3 /* CounterpartyType.swift */,
 				0FCB7A3BD3231A487280C8D7 /* LVIntervalTrade.swift */,
+				0FCD9B5DE5453C6A9392E2F8 /* LVSettlementRecord.swift */,
 				0FDC8B4CE4342B598391D9E8 /* LVOrder.swift */,
 				AABB1111222233334444AAAA /* LVContractSnapshot.swift */,
 				5194F8E999DEC168E925E879 /* P2PContractTier.swift */,
@@ -712,6 +717,7 @@
 				E0AC926E72215CB60A5863FA /* PowstonDataStore+DaySummaries.swift */,
 				82126FC79DD3D2ED520CB578 /* PowstonDataStore+Locations.swift */,
 				FF4A81D725E0AAF49F9F4C97 /* PowstonDataStore+LVTrades.swift */,
+				FF5B93F947F2CCG6B1B16E09 /* PowstonDataStore+LVSettlement.swift */,
 				FF5B92E836F1BBF5A0A05D08 /* PowstonDataStore+LVOrders.swift */,
 				477397E9524E66E5FB98FAD2 /* PowstonDataStore+MeterRecords.swift */,
 				CF329E21AFC5EC5CB9CC7F5A /* PowstonDataStore+P2PContracts.swift */,
@@ -1422,6 +1428,7 @@
 				5A5644C58F433805CF9C2DE9 /* PowstonDataStore+DaySummaries.swift in Sources */,
 				D4C50F90A69151224EA2FD34 /* PowstonDataStore+Locations.swift in Sources */,
 				A4C806607D785A96398EF15A /* PowstonDataStore+LVTrades.swift in Sources */,
+				A4D917829F907C18510GF2B4 /* PowstonDataStore+LVSettlement.swift in Sources */,
 				A5D917718E896B07509FE1A3 /* PowstonDataStore+LVOrders.swift in Sources */,
 				EB5FD26D9A4E880C993F21E0 /* PowstonDataStore+MeterRecords.swift in Sources */,
 				AED7E5A0A600CDB410F4BFBC /* PowstonDataStore+P2PContracts.swift in Sources */,
@@ -1437,6 +1444,7 @@
 				586403D50E65B692E1F6983C /* AnalysisCacheEntry.swift in Sources */,
 				C86F741E8587CA0D72F6454E /* CounterpartyType.swift in Sources */,
 				ABA7169E4B30B58750683542 /* LVIntervalTrade.swift in Sources */,
+				ABBA0C1E5D42D7A862895F31 /* LVSettlementRecord.swift in Sources */,
 				ABB8270F5C31C69851784653 /* LVOrder.swift in Sources */,
 				3203AC655082D21B32387648 /* P2PContractTier.swift in Sources */,
 				D4FDAC5CBF5F5FE84D3A26DE /* P2PCounterpartyLocation.swift in Sources */,

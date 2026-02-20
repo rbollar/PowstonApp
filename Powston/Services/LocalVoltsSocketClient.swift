@@ -36,6 +36,7 @@ class LocalVoltsSocketClient {
     var onTradesReceived: (([LVIntervalTrade]) -> Void)?
     var onMarketContractsReceived: (([LVMarketContract]) -> Void)?
     var onOrdersReceived: (([LVOrder]) -> Void)?
+    var onSettlementReceived: (([LVSettlementRecord]) -> Void)?
     var onError: ((Error) -> Void)?
     var onDisconnect: (() -> Void)?
 
@@ -111,12 +112,26 @@ class LocalVoltsSocketClient {
                 // Parse trade data from identity response
                 if let content = dict["content"] as? [String: Any],
                    let resultsRaw = content["aobjResults"] as? [Any] {
-                    // Extract NMI from meter data
-                    if isIdentityResponse && resultsRaw.count > 2,
-                       let meterArray = resultsRaw[2] as? [Any],
-                       let firstMeter = meterArray.first as? [String: Any],
-                       let nmiValue = firstMeter["NMI"] as? String {
-                        self.nmi = nmiValue
+
+                    // Find the reportList mapping from result[1]
+                    if isIdentityResponse {
+                        self.parseIdentityResultSets(resultsRaw)
+                    }
+
+                    // Extract NMI from settlement data
+                    if isIdentityResponse {
+                        let settlementIndex = self.findSettlementIndex(resultsRaw)
+                        if let idx = settlementIndex,
+                           let arr = resultsRaw[idx] as? [Any],
+                           let first = arr.first as? [String: Any],
+                           let nmiValue = first["NMI"] as? String {
+                            self.nmi = nmiValue
+                        } else if resultsRaw.count > 2,
+                           let meterArray = resultsRaw[2] as? [Any],
+                           let firstMeter = meterArray.first as? [String: Any],
+                           let nmiValue = firstMeter["NMI"] as? String {
+                            self.nmi = nmiValue
+                        }
                     }
                     self.parseAndEmitTrades(resultsRaw)
                 }
@@ -278,6 +293,72 @@ class LocalVoltsSocketClient {
         }
     }
 
+    /// Parse identity response result sets and extract settlement data
+    private func parseIdentityResultSets(_ results: [Any]) {
+        print("📊 Identity: \(results.count) result sets")
+
+        // result[1] contains the reportList mapping
+        if results.count > 1,
+           let configArray = results[1] as? [Any],
+           let config = configArray.first as? [String: Any],
+           let reportList = config["reportList"] as? String {
+            print("📊 Identity reportList: \(reportList)")
+        }
+
+        // Find and parse settlement data (has "settle" + "volume" + "profile" fields)
+        if let idx = findSettlementIndex(results) {
+            let arr = results[idx] as! [Any]
+            let records = arr.compactMap { ($0 as? [String: Any]).flatMap(LVSettlementRecord.parse) }
+            if !records.isEmpty {
+                let summary = records.cashflowSummary()
+                logCashflowSummary(summary, label: "Identity (today)")
+                onSettlementReceived?(records)
+            }
+        }
+    }
+
+    /// Find the index of the LARGEST settlement data result set (has settle + volume + profile)
+    /// Identity responses can contain multiple settlement-like sets at different resolutions;
+    /// the largest one (basis=288, 5-min) has the complete financial breakdown.
+    private func findSettlementIndex(_ results: [Any]) -> Int? {
+        var bestIdx: Int?
+        var bestCount = 0
+        for (idx, raw) in results.enumerated() {
+            guard let arr = raw as? [Any], arr.count > 10,
+                  let first = arr.first as? [String: Any] else { continue }
+            if first["settle"] != nil && first["volume"] != nil && first["profile"] != nil {
+                print("📊 Settlement candidate: index=\(idx), count=\(arr.count)")
+                if arr.count > bestCount {
+                    bestCount = arr.count
+                    bestIdx = idx
+                }
+            }
+        }
+        if let idx = bestIdx {
+            print("📊 Selected settlement index=\(idx), count=\(bestCount)")
+        }
+        return bestIdx
+    }
+
+    /// Log a cashflow summary matching the LV dashboard format
+    private func logCashflowSummary(_ s: LVCashflowSummary, label: String) {
+        print("💰 LV Cashflow Breakdown (\(label)):")
+        print("💰   Net Costs: $\(String(format: "%.2f", s.netCosts))")
+        print("💰   All Purchases: $\(String(format: "%.2f", s.totalPurchases))")
+        print("💰     Spot Energy: $\(String(format: "%.2f", s.spotEnergyCost))")
+        print("💰     Network Energy: $\(String(format: "%.2f", s.networkEnergyCost))")
+        print("💰     Network Access: $\(String(format: "%.2f", s.networkAccessCost))")
+        print("💰     Certificates: $\(String(format: "%.2f", s.certificatesCost))")
+        print("💰     LocalVolts Fee: $\(String(format: "%.2f", s.localvoltsFee))")
+        print("💰   All Sales: $\(String(format: "%.2f", s.totalSales))")
+        print("💰     Spot Energy: $\(String(format: "%.2f", s.spotEnergyRevenue))")
+        print("💰     P2P Matched: $\(String(format: "%.2f", s.p2pMatchedRevenue))")
+        print("💰   Energy Purchased: \(String(format: "%.2f", s.energyPurchasedKwh)) kWh")
+        print("💰   Energy Sold: \(String(format: "%.2f", s.energySoldTotalKwh)) kWh (Spot \(String(format: "%.2f", s.energySoldSpotKwh)), P2P \(String(format: "%.2f", s.energySoldP2PKwh)))")
+        print("💰   Emissions: \(String(format: "%.2f", s.emissions)) kgCO2e")
+        print("💰   Records: \(s.records)")
+    }
+
     private func parsePeriodTimestamp(from dict: [String: Any]) -> Date? {
         guard let periodNum = dict["period"] as? Int,
               let dateStr = dict["date"] as? String else { return nil }
@@ -345,6 +426,10 @@ class LocalVoltsSocketClient {
                    let resultsRaw = content["aobjResults"] as? [Any] {
 
                     if routingKey.contains("QtyReport") {
+                        // Log reportList mapping (index → data type)
+                        if let reportList = content["reportList"] as? String {
+                            print("📊 QtyReport reportList: \(reportList)")
+                        }
                         self.parseQtyReportTrades(resultsRaw)
                     } else if routingKey.contains("ContractTable") {
                         self.parseContractTableResponse(resultsRaw)
@@ -382,11 +467,15 @@ class LocalVoltsSocketClient {
         var trades: [LVIntervalTrade] = []
         let fetchedAt = Date()
 
-        for resultRaw in results {
-            guard let resultSet = resultRaw as? [Any], !resultSet.isEmpty,
-                  let firstDict = resultSet.first as? [String: Any] else { continue }
+        print("📊 QtyReport: parsing \(results.count) result sets")
 
-            // Identity-format P2P trades (counterparty + sellPrice/buyPrice)
+        // Extract P2P trades from all result sets that have counterparty data
+        for (index, resultRaw) in results.enumerated() {
+            guard let resultSet = resultRaw as? [Any], !resultSet.isEmpty,
+                  let firstDict = resultSet.first as? [String: Any] else {
+                continue
+            }
+
             let isIdentityP2P = firstDict["counterparty"] != nil &&
                                 firstDict["direction"] != nil &&
                                 (firstDict["sellPrice"] != nil || firstDict["buyPrice"] != nil)
@@ -405,6 +494,23 @@ class LocalVoltsSocketClient {
                         trades.append(trade)
                     }
                 }
+                print("📊 QtyReport result[\(index)]: \(trades.count) P2P trades")
+            }
+        }
+
+        // Use findSettlementIndex to pick the LARGEST settlement result set
+        // (avoids double-counting from multiple settlement sets at different resolutions)
+        if let idx = findSettlementIndex(results),
+           let arr = results[idx] as? [Any] {
+            let allSettlement = arr.compactMap { ($0 as? [String: Any]).flatMap(LVSettlementRecord.parse) }
+            if !allSettlement.isEmpty {
+                let byDate = Dictionary(grouping: allSettlement) { $0.date }
+                for (date, records) in byDate.sorted(by: { $0.key < $1.key }) {
+                    let summary = records.cashflowSummary()
+                    logCashflowSummary(summary, label: "QtyReport \(String(date.prefix(10)))")
+                }
+                onSettlementReceived?(allSettlement)
+                print("📊 QtyReport: \(trades.count) trades, \(allSettlement.count) settlement records")
             }
         }
 

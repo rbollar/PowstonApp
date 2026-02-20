@@ -84,6 +84,7 @@ struct HistoryView: View {
     @State private var cachedActualNetProfit: Double = 0
     // Day view financial summary (from fetchHourlyDaySummary for accuracy)
     @State private var dayFinancialSummary: (sold: Double, bought: Double, supply: Double, net: Double, importKwh: Double, exportKwh: Double)?
+    @State private var dayEmissionsKgCO2e: Double?
     // Rolling average for heatmap color calibration (30-day)
     @State private var rollingAverage: Double = 0
     // Savings analysis (requires complete meter_records with ppvGeneration)
@@ -129,6 +130,31 @@ struct HistoryView: View {
         }.sorted { $0.date < $1.date }
     }
     
+    /// Adjust daily summaries with per-day P2P premium for charts
+    /// P2P premium is NOT included in Powston API earnings — add it per day
+    private func adjustDailySummariesForP2P(_ summaries: [DailySummary], siteId: Int) -> [DailySummary] {
+        return summaries.map { summary in
+            if let p2p = PowstonDataStore.shared.calculateP2PPremium(siteId: siteId, date: summary.date) {
+                let sellPremium = p2p.sellRevenue - p2p.sellSpotEquivalent
+                let buySavings = p2p.buySpotEquivalent - p2p.buyCost
+                let adjustment = sellPremium + buySavings
+                if abs(adjustment) > 0.001 {
+                    return DailySummary(
+                        date: summary.date,
+                        totalImport: summary.totalImport,
+                        totalExport: summary.totalExport,
+                        totalEarnings: summary.totalEarnings + sellPremium,
+                        totalCosts: summary.totalCosts - buySavings,
+                        avgSoc: summary.avgSoc,
+                        recordCount: summary.recordCount,
+                        netProfit: summary.netProfit + adjustment
+                    )
+                }
+            }
+            return summary
+        }
+    }
+
     /// Build price lookup dictionary from action records for a date range
     /// This ensures hypothetical scenarios use actual TOU prices, not flat defaults
     private func buildPricesByInterval(siteId: Int, from startDate: Date, to endDate: Date) -> [String: (buy: Double, sell: Double)] {
@@ -730,6 +756,7 @@ struct HistoryView: View {
         let gridExport: Double
         let weatherSummary: (tempMin: Double, tempMax: Double, cloudIcon: String, cloudDesc: String, solarKWh: Double)?
         let isLoadingWeather: Bool
+        var emissionsKgCO2e: Double? = nil
         
         var body: some View {
             HStack(alignment: .bottom, spacing: 40) {
@@ -782,6 +809,16 @@ struct HistoryView: View {
                         Text(String(format: "%.1f kWh/m²", weather.solarKWh))
                             .font(.subheadline.monospacedDigit())
                     }
+
+                    if let co2e = emissionsKgCO2e, co2e > 0 {
+                        HStack(spacing: 12) {
+                            Image(systemName: "leaf.fill")
+                                .foregroundColor(.green)
+                                .frame(width: 14)
+                            Text(String(format: "%.1f kg CO₂e", co2e))
+                                .font(.subheadline.monospacedDigit())
+                        }
+                    }
                 }
             } else {
                 EmptyView()
@@ -802,7 +839,8 @@ struct HistoryView: View {
                 gridImport: cachedTotalImport,
                 gridExport: cachedTotalExport,
                 weatherSummary: weatherSummary,
-                isLoadingWeather: isLoadingWeather
+                isLoadingWeather: isLoadingWeather,
+                emissionsKgCO2e: dayEmissionsKgCO2e
             )
             .padding(.horizontal)
         }
@@ -971,6 +1009,7 @@ struct HistoryView: View {
         records = []; daySummary = nil; historicalWeather = []
         tariffPeriods = []; tariffDefinitions = []
         dayFinancialSummary = nil
+        dayEmissionsKgCO2e = nil
         savingsAnalysis = nil
         dayP2PCounterparties = []
         p2pImportDateRange = nil
@@ -1025,6 +1064,7 @@ struct HistoryView: View {
             // CRITICAL: Use fetchHourlyDaySummary for accurate single-day financials
             // fetchCustomRangeSummary has a bug that returns 2 days for single-day queries
             dayFinancialSummary = nil
+        dayEmissionsKgCO2e = nil
             if let hourlySum = await api.fetchHourlyDaySummary(date: selectedDate) {
                 guard !Task.isCancelled else { isLoading = false; return }
                 dayFinancialSummary = (
@@ -1076,7 +1116,7 @@ struct HistoryView: View {
                 // Build price lookup from actions for accurate TOU-based hypotheticals
                 let pricesByInterval = buildPricesByInterval(siteId: siteId, from: dayStart, to: dayEnd)
                 
-                // Get P2P data if available (for memo display only - already included in actualNet)
+                // Get P2P data (NOT included in Powston API earnings — added by calculator and summary cards)
                 var p2pRevenue: Double = 0
                 var p2pSpotEquivalent: Double = 0
                 var p2pSellRevenue: Double = 0
@@ -1085,16 +1125,9 @@ struct HistoryView: View {
                 var p2pBuyCost: Double = 0
                 var p2pBuyKwh: Double = 0
                 var p2pBuySpotEquivalent: Double = 0
-
-                // DEBUG: List all P2P records to see what's in the database
-                let allP2P = PowstonDataStore.shared.getP2PTradeRecords(siteId: siteId)
-                print("📋 All P2P records for site \(siteId): \(allP2P.count)")
-                for record in allP2P {
-                    print("   📋 \(record.startDate) to \(record.endDate): \(record.p2pKwh) kWh, $\(record.p2pRevenue), direction=\(record.direction.rawValue)")
-                }
+                var p2pNTB: Double = 0
 
                 // Get P2P data if available (now includes separate sell/buy)
-                print("💰 Looking for P2P data: siteId=\(siteId), date=\(selectedDate)")
                 if let p2pData = PowstonDataStore.shared.calculateP2PPremium(siteId: siteId, date: selectedDate) {
                     p2pRevenue = p2pData.p2pRevenue
                     p2pSpotEquivalent = p2pData.spotEquivalent
@@ -1104,9 +1137,52 @@ struct HistoryView: View {
                     p2pBuyCost = p2pData.buyCost
                     p2pBuyKwh = p2pData.buyKwh
                     p2pBuySpotEquivalent = p2pData.buySpotEquivalent
-                    print("💰 P2P data found: sellRevenue=\(p2pSellRevenue), buyCost=\(p2pBuyCost)")
+                    p2pNTB = p2pData.ntb
+                    print("💰 P2P data found: sellRevenue=\(p2pSellRevenue), buyCost=\(p2pBuyCost), ntb=\(p2pNTB)")
+                }
+
+                // Use LV settlement data if available (authoritative source)
+                // Falls back to P2P premium imputation if no settlement data
+                // Fetch on demand if missing
+                if PowstonDataStore.shared.getLVCashflowSummary(siteId: siteId, date: selectedDate) == nil,
+                   LocalVoltsService.shared.hasCredentials {
+                    let dayStart = calendar.startOfDay(for: selectedDate)
+                    let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
+                    _ = await LocalVoltsService.shared.fetchSettlementOnDemand(
+                        siteId: siteId, from: dayStart, to: dayEnd)
+                }
+                if let lvCashflow = PowstonDataStore.shared.getLVCashflowSummary(siteId: siteId, date: selectedDate) {
+                    let sold = lvCashflow.totalSales
+                    let supply = lvCashflow.networkAccessCost + lvCashflow.localvoltsFee  // Fixed daily grid connection costs
+                    let bought = lvCashflow.spotEnergyCost + lvCashflow.networkEnergyCost + lvCashflow.certificatesCost  // Variable energy costs
+                    let net = -lvCashflow.netCosts  // LV netCosts is positive=cost, we want positive=profit
+                    dayFinancialSummary = (
+                        sold: ((sold) * 100).rounded() / 100,
+                        bought: ((bought) * 100).rounded() / 100,
+                        supply: ((supply) * 100).rounded() / 100,
+                        net: ((net) * 100).rounded() / 100,
+                        importKwh: lvCashflow.energyPurchasedKwh,
+                        exportKwh: lvCashflow.energySoldTotalKwh
+                    )
+                    dayEmissionsKgCO2e = lvCashflow.emissions > 0 ? lvCashflow.emissions : nil
                 } else {
-                    print("💰 No P2P data found for site \(siteId) on \(selectedDate)")
+                    // Fallback: adjust Powston API data with P2P premium imputation
+                    let p2pSellPremium = p2pSellRevenue - p2pSellSpotEquivalent
+                    let p2pBuySavings = p2pBuySpotEquivalent - p2pBuyCost
+                    let p2pAdj = p2pSellPremium + p2pBuySavings
+                    if abs(p2pAdj) > 0.001 {
+                        let newSold = ((fin.sold + p2pSellPremium) * 100).rounded() / 100
+                        let newBought = ((fin.bought - p2pBuySavings) * 100).rounded() / 100
+                        let newNet = ((fin.net + p2pAdj) * 100).rounded() / 100
+                        dayFinancialSummary = (
+                            sold: newSold,
+                            bought: newBought,
+                            supply: newSold - newBought - newNet,
+                            net: newNet,
+                            importKwh: fin.importKwh,
+                            exportKwh: fin.exportKwh
+                        )
+                    }
                 }
 
                 // Load P2P counterparties for disclosure (from both CSV imports and LV API)
@@ -1147,11 +1223,14 @@ struct HistoryView: View {
                                         p2pSellSpotEquivalent: p2pSellSpotEquivalent,
                                         p2pBuyCost: p2pBuyCost,
                                         p2pBuyKwh: p2pBuyKwh,
-                                        p2pBuySpotEquivalent: p2pBuySpotEquivalent
+                                        p2pBuySpotEquivalent: p2pBuySpotEquivalent,
+                                        p2pNTB: p2pNTB
                                     )
-                
-                if let sa = savingsAnalysis {
-                    print("💰 SavingsAnalysis created: p2pRevenue=\(sa.p2pRevenue), hasP2PData=\(sa.hasP2PData)")
+
+                // Override actualCost with LV settlement data if available
+                if let sa = savingsAnalysis,
+                   let lvCashflow = PowstonDataStore.shared.getLVCashflowSummary(siteId: siteId, date: selectedDate) {
+                    savingsAnalysis = sa.withActualCost(lvCashflow.netCosts)
                 }
             }
             
@@ -1222,7 +1301,7 @@ struct HistoryView: View {
                     // Build price lookup from actions for accurate TOU-based hypotheticals
                     let pricesByInterval = buildPricesByInterval(siteId: siteId, from: weekStart, to: weekEndPlusOne)
                     
-                    // Get P2P data if available (for memo display only - already included in actualNet)
+                    // Get P2P data (NOT included in Powston API earnings — added by calculator and summary cards)
                     var p2pRevenue: Double = 0
                     var p2pSpotEquivalent: Double = 0
                     var p2pSellRevenue: Double = 0
@@ -1231,6 +1310,7 @@ struct HistoryView: View {
                     var p2pBuyCost: Double = 0
                     var p2pBuyKwh: Double = 0
                     var p2pBuySpotEquivalent: Double = 0
+                    var p2pNTB: Double = 0
 
                     if let p2pData = PowstonDataStore.shared.calculateP2PPremiumForRangeDetailed(
                         siteId: siteId, from: weekStart, to: weekEnd) {
@@ -1242,8 +1322,29 @@ struct HistoryView: View {
                         p2pBuyCost = p2pData.buyCost
                         p2pBuyKwh = p2pData.buyKwh
                         p2pBuySpotEquivalent = p2pData.buySpotEquivalent
-                        print("💰 Week P2P data: sellRevenue=\(p2pSellRevenue), buyCost=\(p2pBuyCost)")
+                        p2pNTB = p2pData.ntb
+                        print("💰 Week P2P data: sellRevenue=\(p2pSellRevenue), buyCost=\(p2pBuyCost), ntb=\(p2pNTB)")
                     }
+
+                    // Use LV settlement data through the latest finalized day
+                    let lvCutoff = api.latestCompleteDataDate ?? calendar.date(byAdding: .day, value: -2, to: calendar.startOfDay(for: Date()))!
+                    let lvEndDate = min(weekEnd, calendar.startOfDay(for: lvCutoff))
+                    let hasLVData = await populateCardsFromLVCashflow(siteId: siteId, from: weekStart, to: lvEndDate)
+                    if !hasLVData {
+                        // Fallback: adjust Powston API data with P2P premium imputation
+                        let p2pSellPremium = p2pSellRevenue - p2pSellSpotEquivalent
+                        let p2pBuySavings = p2pBuySpotEquivalent - p2pBuyCost
+                        let p2pAdj = p2pSellPremium + p2pBuySavings
+                        if abs(p2pAdj) > 0.001 {
+                            cachedTotalEarnings = ((cachedTotalEarnings + p2pSellPremium) * 100).rounded() / 100
+                            cachedTotalCosts = ((cachedTotalCosts - p2pBuySavings) * 100).rounded() / 100
+                            cachedActualNetProfit = ((cachedActualNetProfit + p2pAdj) * 100).rounded() / 100
+                            cachedSupplyCosts = cachedTotalEarnings - cachedTotalCosts - cachedActualNetProfit
+                        }
+                    }
+
+                    // Adjust daily summaries with per-day P2P premium for charts
+                    cachedDailySummaries = adjustDailySummariesForP2P(cachedDailySummaries, siteId: siteId)
 
                     // Load P2P counterparties for disclosure (aggregated across the week)
                     dayP2PCounterparties = PowstonDataStore.shared.getP2PCounterpartyTrades(
@@ -1270,7 +1371,8 @@ struct HistoryView: View {
                                             p2pSellSpotEquivalent: p2pSellSpotEquivalent,
                                             p2pBuyCost: p2pBuyCost,
                                             p2pBuyKwh: p2pBuyKwh,
-                                            p2pBuySpotEquivalent: p2pBuySpotEquivalent
+                                            p2pBuySpotEquivalent: p2pBuySpotEquivalent,
+                                            p2pNTB: p2pNTB
                                         )
                 }
             }
@@ -1334,7 +1436,7 @@ struct HistoryView: View {
                     // Build price lookup from actions for accurate TOU-based hypotheticals
                     let pricesByInterval = buildPricesByInterval(siteId: siteId, from: monthStart, to: monthEndPlusOne)
 
-                    // Get P2P data if available (for memo display only - already included in actualNet)
+                    // Get P2P data (NOT included in Powston API earnings — added by calculator and summary cards)
                     var p2pRevenue: Double = 0
                     var p2pSpotEquivalent: Double = 0
                     var p2pSellRevenue: Double = 0
@@ -1343,6 +1445,7 @@ struct HistoryView: View {
                     var p2pBuyCost: Double = 0
                     var p2pBuyKwh: Double = 0
                     var p2pBuySpotEquivalent: Double = 0
+                    var p2pNTB: Double = 0
 
                     if let p2pData = PowstonDataStore.shared.calculateP2PPremiumForRangeDetailed(
                         siteId: siteId, from: monthStart, to: monthEnd) {
@@ -1354,8 +1457,41 @@ struct HistoryView: View {
                         p2pBuyCost = p2pData.buyCost
                         p2pBuyKwh = p2pData.buyKwh
                         p2pBuySpotEquivalent = p2pData.buySpotEquivalent
-                        print("💰 Month P2P data: sellRevenue=\(p2pSellRevenue), buyCost=\(p2pBuyCost)")
+                        p2pNTB = p2pData.ntb
+                        print("💰 Month P2P data: sellRevenue=\(p2pSellRevenue), buyCost=\(p2pBuyCost), ntb=\(p2pNTB)")
                     }
+
+                    // Use LV settlement data through the latest finalized day
+                    let lvCutoff = api.latestCompleteDataDate ?? calendar.date(byAdding: .day, value: -2, to: calendar.startOfDay(for: Date()))!
+                    let lvEndDate = min(monthEnd, calendar.startOfDay(for: lvCutoff))
+                    let hasLVData = await populateCardsFromLVCashflow(siteId: siteId, from: monthStart, to: lvEndDate, fetchOnDemand: true)
+                    if !hasLVData {
+                        // Fallback: adjust Powston API data with P2P premium imputation
+                        let p2pSellPremium = p2pSellRevenue - p2pSellSpotEquivalent
+                        let p2pBuySavings = p2pBuySpotEquivalent - p2pBuyCost
+                        let p2pAdj = p2pSellPremium + p2pBuySavings
+                        if abs(p2pAdj) > 0.001 {
+                            cachedTotalEarnings = ((cachedTotalEarnings + p2pSellPremium) * 100).rounded() / 100
+                            cachedTotalCosts = ((cachedTotalCosts - p2pBuySavings) * 100).rounded() / 100
+                            cachedActualNetProfit = ((cachedActualNetProfit + p2pAdj) * 100).rounded() / 100
+                            cachedSupplyCosts = cachedTotalEarnings - cachedTotalCosts - cachedActualNetProfit
+                        }
+                    }
+
+                    // Always filter records to finalized dates to exclude incomplete days
+                    // (today, yesterday) — independent of LV data availability
+                    let cutoffDate = calendar.date(byAdding: .day, value: 1, to: lvEndDate) ?? lvEndDate
+                    var effectiveRecords = monthRecords.filter { record in
+                        guard let recordDate = record.date else { return false }
+                        return recordDate < cutoffDate
+                    }
+                    if effectiveRecords.count < monthRecords.count {
+                        cachedDailySummaries = buildDailySummaries(from: effectiveRecords)
+                        print("💰 Filtered records: \(effectiveRecords.count) of \(monthRecords.count) (through \(lvEndDate))")
+                    }
+
+                    // Adjust daily summaries with per-day P2P premium for charts
+                    cachedDailySummaries = adjustDailySummariesForP2P(cachedDailySummaries, siteId: siteId)
 
                     // Load P2P counterparties for disclosure (aggregated across the month)
                     dayP2PCounterparties = PowstonDataStore.shared.getP2PCounterpartyTrades(
@@ -1366,11 +1502,11 @@ struct HistoryView: View {
                     p2pImportDateRange = nil  // Not relevant for month view
 
                     let calculator = SavingsAnalysisCalculator()
-                    savingsAnalysis = calculator.calculateForPeriod(
-                                            records: monthRecords,
+                    var sa = calculator.calculateForPeriod(
+                                            records: effectiveRecords,
                                             pricesByInterval: pricesByInterval,
                                             batteryCapacityKwh: batteryCapacity,
-                                            supplyCost: supplyCost,
+                                            supplyCost: hasLVData ? cachedSupplyCosts : supplyCost,
                                             totalImportKwh: cachedTotalImport,
                                             totalExportKwh: cachedTotalExport,
                                             actualNetFromAPI: actualNet,
@@ -1382,8 +1518,18 @@ struct HistoryView: View {
                                             p2pSellSpotEquivalent: p2pSellSpotEquivalent,
                                             p2pBuyCost: p2pBuyCost,
                                             p2pBuyKwh: p2pBuyKwh,
-                                            p2pBuySpotEquivalent: p2pBuySpotEquivalent
+                                            p2pBuySpotEquivalent: p2pBuySpotEquivalent,
+                                            p2pNTB: p2pNTB
                                         )
+                    // Override actual cost with LV settlement data when available
+                    if hasLVData, let saUnwrapped = sa {
+                        let lvForOverride = PowstonDataStore.shared.getLVCashflowSummaries(siteId: siteId, from: monthStart, to: lvEndDate)
+                        if !lvForOverride.isEmpty {
+                            let lvAgg = lvForOverride.aggregated()
+                            sa = saUnwrapped.withActualCost(lvAgg.netCosts)
+                        }
+                    }
+                    savingsAnalysis = sa
                 }
             }
 
@@ -1392,6 +1538,36 @@ struct HistoryView: View {
             // Fallback to API if no meter records available
             if cachedDailySummaries.isEmpty {
                 cachedDailySummaries = await api.fetchMonthDailyBreakdownCumulative(year: year, month: month)
+            }
+
+            // LV settlement fallback: if still no data, try LV cashflow for this month
+            if cachedDailySummaries.isEmpty,
+               let siteId = api.selectedSite?.id,
+               LocalVoltsService.shared.hasCredentials {
+
+                // Check if we have LV data cached for this month
+                let lvSummaries = PowstonDataStore.shared.getLVCashflowSummaries(
+                    siteId: siteId, from: monthStart, to: monthEnd)
+
+                if lvSummaries.isEmpty {
+                    // Fetch on demand from LV WebSocket
+                    print("📊 Month view: no Powston data, fetching LV settlement on demand...")
+                    let fetched = await LocalVoltsService.shared.fetchSettlementOnDemand(
+                        siteId: siteId, from: monthStart, to: monthEnd)
+                    if fetched > 0 {
+                        // Re-query after fetch
+                        let freshLV = PowstonDataStore.shared.getLVCashflowSummaries(
+                            siteId: siteId, from: monthStart, to: monthEnd)
+                        cachedDailySummaries = freshLV.compactMap { $0.toDailySummary() }
+                    }
+                } else {
+                    cachedDailySummaries = lvSummaries.compactMap { $0.toDailySummary() }
+                }
+
+                // Populate summary cards from LV data if Powston API had nothing
+                if !cachedDailySummaries.isEmpty && cachedTotalEarnings == 0 && cachedTotalCosts == 0 {
+                    _ = await populateCardsFromLVCashflow(siteId: siteId, from: monthStart, to: monthEnd, requireComplete: false)
+                }
             }
 
             isLoadingSummary = false; records = []
@@ -1441,7 +1617,139 @@ struct HistoryView: View {
                             )
                         }
 
-            // Load P2P data for year view (displayed separately since year doesn't use SavingsAnalysis)
+            // Merge LV settlement data for months beyond Powston API's retention
+            if let siteId = api.selectedSite?.id,
+               LocalVoltsService.shared.hasCredentials {
+                // Find which months Powston API covers (has non-zero data)
+                let powstonMonths = Set(cachedDailySummaries.compactMap { s -> Int? in
+                    let m = calendar.component(.month, from: s.date)
+                    return s.recordCount > 0 ? m : nil
+                })
+
+                // Get LV monthly summaries for the year
+                let lvMonthlySummaries = PowstonDataStore.shared.getLVMonthlySummaries(siteId: siteId, year: year)
+
+                if !lvMonthlySummaries.isEmpty {
+                    // Convert LV months to DailySummary, only for months Powston doesn't cover
+                    let lvMonthEntries = LVCashflowSummary.monthlyAggregates(from: lvMonthlySummaries, year: year)
+                    var addedLVMonths: [DailySummary] = []
+                    for lvEntry in lvMonthEntries {
+                        let m = calendar.component(.month, from: lvEntry.date)
+                        if !powstonMonths.contains(m) {
+                            addedLVMonths.append(lvEntry)
+                        }
+                    }
+
+                    if !addedLVMonths.isEmpty {
+                        cachedDailySummaries.append(contentsOf: addedLVMonths)
+                        cachedDailySummaries.sort { $0.date < $1.date }
+
+                        // Add LV months' financials to summary card totals
+                        let lvAdded = addedLVMonths.reduce(into: (earnings: 0.0, costs: 0.0, net: 0.0, imp: 0.0, exp: 0.0)) { acc, s in
+                            acc.earnings += s.totalEarnings
+                            acc.costs += s.totalCosts
+                            acc.net += s.netProfit
+                            acc.imp += s.totalImport
+                            acc.exp += s.totalExport
+                        }
+                        cachedTotalEarnings += ((lvAdded.earnings) * 100).rounded() / 100
+                        cachedTotalCosts += ((lvAdded.costs) * 100).rounded() / 100
+                        cachedActualNetProfit += ((lvAdded.net) * 100).rounded() / 100
+                        cachedTotalImport += lvAdded.imp
+                        cachedTotalExport += lvAdded.exp
+                        cachedSupplyCosts = cachedTotalEarnings - cachedTotalCosts - cachedActualNetProfit
+                        print("📊 Year view: added \(addedLVMonths.count) LV months, net=\(String(format: "%.2f", lvAdded.net))")
+                    }
+                }
+
+                guard !Task.isCancelled else { isLoadingSummary = false; return }
+
+                // Check if older months are missing from both Powston and LV — trigger on-demand fetch
+                // Use cached earliest LV date to avoid repeated fetches for months before user joined LV
+                let coveredMonths = Set(cachedDailySummaries.map { calendar.component(.month, from: $0.date) })
+                let currentMonth = calendar.component(.month, from: Date())
+                let maxMonth = isCurrentYear ? currentMonth : 12
+
+                // Determine earliest month worth fetching (skip months before user's LV start)
+                let earliestLVKey = "lv_earliest_settlement_date_\(siteId)"
+                let earliestLVDateStr = UserDefaults.standard.string(forKey: earliestLVKey)
+                let earliestLVMonth: Int
+                if let dateStr = earliestLVDateStr,
+                   let earliestYear = Int(dateStr.prefix(4)),
+                   let earliestMo = Int(dateStr.dropFirst(5).prefix(2)) {
+                    if earliestYear > year {
+                        earliestLVMonth = 13  // No LV data for this year at all
+                    } else if earliestYear == year {
+                        earliestLVMonth = earliestMo
+                    } else {
+                        earliestLVMonth = 1  // LV data starts before this year
+                    }
+                } else {
+                    earliestLVMonth = 1  // Unknown — try everything
+                }
+
+                let missingMonths = (earliestLVMonth...maxMonth).filter { !coveredMonths.contains($0) }
+
+                if !missingMonths.isEmpty, let firstMissing = missingMonths.first, let lastMissing = missingMonths.last {
+                    let fetchFrom = calendar.date(from: DateComponents(year: year, month: firstMissing, day: 1)) ?? yearStart
+                    let fetchToMonth = calendar.date(from: DateComponents(year: year, month: lastMissing, day: 1)) ?? yearStart
+                    let fetchTo = calendar.date(byAdding: .month, value: 1, to: fetchToMonth) ?? fetchToMonth
+
+                    print("📊 Year view: fetching LV settlement for missing months \(missingMonths)...")
+                    let fetched = await LocalVoltsService.shared.fetchSettlementOnDemand(
+                        siteId: siteId, from: fetchFrom, to: fetchTo)
+
+                    // After fetch, update the cached earliest LV date
+                    if let earliest = PowstonDataStore.shared.getEarliestSettlementDate(siteId: siteId) {
+                        UserDefaults.standard.set(earliest, forKey: earliestLVKey)
+                        print("📊 Cached earliest LV settlement date: \(earliest)")
+                    } else if fetched == 0 && earliestLVDateStr == nil {
+                        // No data found at all — record a sentinel so we don't try again
+                        // Use today's date as "earliest" — nothing before today exists
+                        let formatter = DateFormatter()
+                        formatter.dateFormat = "yyyy-MM-dd"
+                        formatter.timeZone = TimeZone(identifier: "Australia/Brisbane")
+                        UserDefaults.standard.set(formatter.string(from: Date()), forKey: earliestLVKey)
+                        print("📊 No LV settlement data found, cached sentinel date")
+                    }
+
+                    if fetched > 0 {
+                        // Reload LV monthly summaries and merge again
+                        let freshLV = PowstonDataStore.shared.getLVMonthlySummaries(siteId: siteId, year: year)
+                        let freshEntries = LVCashflowSummary.monthlyAggregates(from: freshLV, year: year)
+                        var addedFresh: [DailySummary] = []
+                        let existingMonths = Set(cachedDailySummaries.map { calendar.component(.month, from: $0.date) })
+                        for entry in freshEntries {
+                            let m = calendar.component(.month, from: entry.date)
+                            if !existingMonths.contains(m) {
+                                addedFresh.append(entry)
+                            }
+                        }
+                        if !addedFresh.isEmpty {
+                            cachedDailySummaries.append(contentsOf: addedFresh)
+                            cachedDailySummaries.sort { $0.date < $1.date }
+                            let freshAdded = addedFresh.reduce(into: (earnings: 0.0, costs: 0.0, net: 0.0, imp: 0.0, exp: 0.0)) { acc, s in
+                                acc.earnings += s.totalEarnings
+                                acc.costs += s.totalCosts
+                                acc.net += s.netProfit
+                                acc.imp += s.totalImport
+                                acc.exp += s.totalExport
+                            }
+                            cachedTotalEarnings += ((freshAdded.earnings) * 100).rounded() / 100
+                            cachedTotalCosts += ((freshAdded.costs) * 100).rounded() / 100
+                            cachedActualNetProfit += ((freshAdded.net) * 100).rounded() / 100
+                            cachedTotalImport += freshAdded.imp
+                            cachedTotalExport += freshAdded.exp
+                            cachedSupplyCosts = cachedTotalEarnings - cachedTotalCosts - cachedActualNetProfit
+                            print("📊 Year view: added \(addedFresh.count) freshly-fetched LV months")
+                        }
+                    }
+                }
+            }
+
+            guard !Task.isCancelled else { isLoadingSummary = false; return }
+
+            // Load P2P data for year view and adjust summary cards
             yearP2PData = nil
             if let siteId = api.selectedSite?.id {
                 // Year range: Jan 1 to Dec 31 (or today if current year)
@@ -1455,6 +1763,18 @@ struct HistoryView: View {
                     siteId: siteId, from: yearStart, to: yearEndDate)
                 if let p2p = yearP2PData {
                     print("💰 Year P2P data: sellRevenue=\(p2p.sellRevenue), buyCost=\(p2p.buyCost)")
+
+                    // Adjust summary card values with P2P premium
+                    // Pre-round to cents and derive supply so Sold - Bought - Supply = Net in display
+                    let p2pSellPremium = p2p.sellRevenue - p2p.sellSpotEquivalent
+                    let p2pBuySavings = p2p.buySpotEquivalent - p2p.buyCost
+                    let p2pAdj = p2pSellPremium + p2pBuySavings
+                    if abs(p2pAdj) > 0.001 {
+                        cachedTotalEarnings = ((cachedTotalEarnings + p2pSellPremium) * 100).rounded() / 100
+                        cachedTotalCosts = ((cachedTotalCosts - p2pBuySavings) * 100).rounded() / 100
+                        cachedActualNetProfit = ((cachedActualNetProfit + p2pAdj) * 100).rounded() / 100
+                        cachedSupplyCosts = cachedTotalEarnings - cachedTotalCosts - cachedActualNetProfit
+                    }
                 }
             }
 
@@ -1528,7 +1848,7 @@ struct HistoryView: View {
                     // Build price lookup from actions for accurate TOU-based hypotheticals
                     let pricesByInterval = buildPricesByInterval(siteId: siteId, from: customStartDate, to: customEndPlusOne)
 
-                    // Get P2P data if available (for memo display only - already included in actualNet)
+                    // Get P2P data (NOT included in Powston API earnings — added by calculator and summary cards)
                     var p2pRevenue: Double = 0
                     var p2pSpotEquivalent: Double = 0
                     var p2pSellRevenue: Double = 0
@@ -1537,6 +1857,7 @@ struct HistoryView: View {
                     var p2pBuyCost: Double = 0
                     var p2pBuyKwh: Double = 0
                     var p2pBuySpotEquivalent: Double = 0
+                    var p2pNTB: Double = 0
 
                     if let p2pData = PowstonDataStore.shared.calculateP2PPremiumForRangeDetailed(
                         siteId: siteId, from: customStartDate, to: customEndDate) {
@@ -1548,8 +1869,29 @@ struct HistoryView: View {
                         p2pBuyCost = p2pData.buyCost
                         p2pBuyKwh = p2pData.buyKwh
                         p2pBuySpotEquivalent = p2pData.buySpotEquivalent
-                        print("💰 Custom P2P data: sellRevenue=\(p2pSellRevenue), buyCost=\(p2pBuyCost)")
+                        p2pNTB = p2pData.ntb
+                        print("💰 Custom P2P data: sellRevenue=\(p2pSellRevenue), buyCost=\(p2pBuyCost), ntb=\(p2pNTB)")
                     }
+
+                    // Use LV settlement data through the latest finalized day
+                    let lvCutoff = api.latestCompleteDataDate ?? calendar.date(byAdding: .day, value: -2, to: calendar.startOfDay(for: Date()))!
+                    let lvEndDate = min(customEndDate, calendar.startOfDay(for: lvCutoff))
+                    let hasLVData = await populateCardsFromLVCashflow(siteId: siteId, from: customStartDate, to: lvEndDate)
+                    if !hasLVData {
+                        // Fallback: adjust Powston API data with P2P premium imputation
+                        let p2pSellPremium = p2pSellRevenue - p2pSellSpotEquivalent
+                        let p2pBuySavings = p2pBuySpotEquivalent - p2pBuyCost
+                        let p2pAdj = p2pSellPremium + p2pBuySavings
+                        if abs(p2pAdj) > 0.001 {
+                            cachedTotalEarnings = ((cachedTotalEarnings + p2pSellPremium) * 100).rounded() / 100
+                            cachedTotalCosts = ((cachedTotalCosts - p2pBuySavings) * 100).rounded() / 100
+                            cachedActualNetProfit = ((cachedActualNetProfit + p2pAdj) * 100).rounded() / 100
+                            cachedSupplyCosts = cachedTotalEarnings - cachedTotalCosts - cachedActualNetProfit
+                        }
+                    }
+
+                    // Adjust daily summaries with per-day P2P premium for charts
+                    cachedDailySummaries = adjustDailySummariesForP2P(cachedDailySummaries, siteId: siteId)
 
                     // Load P2P counterparties for disclosure (aggregated across the custom range)
                     dayP2PCounterparties = PowstonDataStore.shared.getP2PCounterpartyTrades(
@@ -1576,7 +1918,8 @@ struct HistoryView: View {
                                             p2pSellSpotEquivalent: p2pSellSpotEquivalent,
                                             p2pBuyCost: p2pBuyCost,
                                             p2pBuyKwh: p2pBuyKwh,
-                                            p2pBuySpotEquivalent: p2pBuySpotEquivalent
+                                            p2pBuySpotEquivalent: p2pBuySpotEquivalent,
+                                            p2pNTB: p2pNTB
                                         )
                 }
             }
@@ -1648,6 +1991,37 @@ struct HistoryView: View {
         }.sorted { $0.date < $1.date }
     }
     
+    /// Populate summary cards from aggregated LV cashflow data
+    /// Returns true if LV data was available and cards were populated
+    private func populateCardsFromLVCashflow(siteId: Int, from: Date, to: Date, fetchOnDemand: Bool = false, requireComplete: Bool = true) async -> Bool {
+        var lvSummaries = PowstonDataStore.shared.getLVCashflowSummaries(siteId: siteId, from: from, to: to)
+        let expectedDays = calendar.dateComponents([.day], from: from, to: to).day! + 1
+
+        // On-demand fetch if data is missing
+        if fetchOnDemand && lvSummaries.count < expectedDays && expectedDays > 0 && LocalVoltsService.shared.hasCredentials {
+            let fetched = await LocalVoltsService.shared.fetchSettlementOnDemand(siteId: siteId, from: from, to: to)
+            if fetched > 0 {
+                lvSummaries = PowstonDataStore.shared.getLVCashflowSummaries(siteId: siteId, from: from, to: to)
+            }
+        }
+
+        if requireComplete {
+            guard lvSummaries.count >= expectedDays && expectedDays > 0 else { return false }
+        } else {
+            guard !lvSummaries.isEmpty else { return false }
+        }
+
+        let agg = lvSummaries.aggregated()
+        cachedTotalEarnings = ((agg.totalSales) * 100).rounded() / 100
+        cachedTotalCosts = ((agg.spotEnergyCost + agg.networkEnergyCost + agg.certificatesCost) * 100).rounded() / 100
+        cachedSupplyCosts = ((agg.networkAccessCost + agg.localvoltsFee) * 100).rounded() / 100
+        cachedActualNetProfit = ((-agg.netCosts) * 100).rounded() / 100
+        cachedTotalImport = agg.energyPurchasedKwh
+        cachedTotalExport = agg.energySoldTotalKwh
+
+        return true
+    }
+
     /// Compute totals from cachedDailySummaries for consistency between summary cards and charts
     private func updateCachedTotalsFromDailySummaries() {
         cachedTotalEarnings = cachedDailySummaries.reduce(0) { $0 + $1.totalEarnings }

@@ -429,6 +429,12 @@ class PowstonDataStore: ObservableObject {
 
             // Migration 16: Create contract snapshot tables for subscription tracking
             try createContractSnapshotTables(in: db)
+
+            // Migration 17: Create lv_daily_cashflow table for LV settlement data
+            try createLVSettlementSchema(db)
+
+            // Migration 18: Create lv_settlement_intervals table for per-interval settlement data
+            try createLVSettlementIntervalsSchema(db)
         }
     }
     
