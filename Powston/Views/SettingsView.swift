@@ -45,6 +45,8 @@ struct SettingsView: View {
     @State private var showingApiSetup = false
     @State private var userCoupons: [UserCoupon] = []
     @State private var showDevOptions = false
+    @State private var isRefetchingTrades = false
+    @State private var refetchTradeResult: String? = nil
     @StateObject private var notificationManager = NotificationManager.shared
 
     var aboutURL: URL {
@@ -380,6 +382,33 @@ struct SettingsView: View {
                                 }
                             }
                             .listRowBackground(Color.purple.opacity(0.1))
+
+                            if LocalVoltsService.shared.hasCredentials {
+                                Button {
+                                    isRefetchingTrades = true
+                                    Task {
+                                        if let siteId = api.selectedSite?.id {
+                                            let count = await LocalVoltsService.shared.refetchAllTrades(siteId: siteId)
+                                            refetchTradeResult = "Fetched \(count) trades"
+                                        }
+                                        isRefetchingTrades = false
+                                    }
+                                } label: {
+                                    HStack {
+                                        if isRefetchingTrades {
+                                            ProgressView().scaleEffect(0.8)
+                                        }
+                                        VStack(alignment: .leading) {
+                                            Text("Refetch P2P Trades")
+                                            Text(refetchTradeResult ?? "Re-download 60 days of P2P trade history")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                }
+                                .disabled(isRefetchingTrades)
+                                .listRowBackground(Color.purple.opacity(0.1))
+                            }
                         }
                     }
                 }

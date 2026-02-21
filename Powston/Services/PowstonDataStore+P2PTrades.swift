@@ -265,6 +265,9 @@ extension PowstonDataStore {
         let buyCost: Double
         let buyKwh: Double
         let buySpotEquivalent: Double    // What buy kWh would have cost at spot
+
+        // NTB (Needed to Balance) — DLF/MLF adjustment between effective rate and raw spot
+        let ntb: Double                  // Positive = our premium is overstated by this amount
     }
 
     /// P2P range calculation result - same structure as P2PPremiumResult but for date ranges
@@ -283,11 +286,14 @@ extension PowstonDataStore {
         let buyCost: Double
         let buyKwh: Double
         let buySpotEquivalent: Double
+
+        // NTB (Needed to Balance) — DLF/MLF adjustment
+        let ntb: Double
     }
 
     /// Calculate P2P premium for a date by comparing to spot sell/buy prices
     /// Returns separate sell and buy data for memo display
-    /// Note: p2pRevenue is ALREADY INCLUDED in Powston's "Sold" figure - this is for memo display
+    /// Note: P2P premium is NOT included in Powston API earnings — it is added by the calculator
     /// Combines data from both CSV imports (p2p_trade_records) and LocalVolts API (lv_interval_trades)
     @MainActor
     func calculateP2PPremium(siteId: Int, date: Date) -> P2PPremiumResult? {
@@ -296,59 +302,144 @@ extension PowstonDataStore {
         let normalizedDate = calendar.startOfDay(for: date)
         let endOfDay = calendar.date(byAdding: .day, value: 1, to: normalizedDate)!.addingTimeInterval(-1)
 
+        // Use ONE source — prefer LV interval trades over CSV imports
         var sellKwh: Double = 0
         var sellRevenue: Double = 0
         var buyKwh: Double = 0
         var buyCost: Double = 0
         var hasData = false
 
-        // Source 1: CSV imports (p2p_trade_records)
-        let records = getP2PTradeRecords(siteId: siteId, from: normalizedDate, to: normalizedDate)
-        for record in records {
-            hasData = true
-            let kwh = record.dayCount == 1 ? record.p2pKwh : record.dailyKwh
-            let revenue = record.dayCount == 1 ? record.p2pRevenue : record.dailyRevenue
-
-            if record.direction == .sell {
-                sellKwh += kwh
-                sellRevenue += revenue
-            } else {
-                buyKwh += kwh
-                buyCost += revenue
-            }
-        }
-
-        // Source 2: LocalVolts API trades (lv_interval_trades)
         let lvTrades = getLVIntervalTrades(siteId: siteId, from: normalizedDate, to: endOfDay)
-        for trade in lvTrades {
+
+        if !lvTrades.isEmpty {
+            // Use LV interval trades (canonical source)
             hasData = true
-            if trade.direction == .sell {
-                sellKwh += trade.volumeKwh
-                sellRevenue += trade.revenue
-            } else {
-                buyKwh += trade.volumeKwh
-                buyCost += trade.revenue
+            for trade in lvTrades {
+                if trade.direction == .sell {
+                    sellKwh += trade.volumeKwh
+                    sellRevenue += trade.revenue
+                } else {
+                    buyKwh += trade.volumeKwh
+                    buyCost += trade.revenue
+                }
+            }
+        } else {
+            // Fallback: CSV imports (p2p_trade_records)
+            let records = getP2PTradeRecords(siteId: siteId, from: normalizedDate, to: normalizedDate)
+            for record in records {
+                hasData = true
+                let kwh = record.dayCount == 1 ? record.p2pKwh : record.dailyKwh
+                let revenue = record.dayCount == 1 ? record.p2pRevenue : record.dailyRevenue
+
+                if record.direction == .sell {
+                    sellKwh += kwh
+                    sellRevenue += revenue
+                } else {
+                    buyKwh += kwh
+                    buyCost += revenue
+                }
             }
         }
 
         guard hasData else { return nil }
 
-        // Get average spot prices for this day from action records
+        // Build per-interval effective spot rate from action records (earnings/kWh)
+        // Use lead inverter only to avoid double-counting with multi-inverter sites
         let actions = fetchActions(siteId: siteId, from: normalizedDate, to: endOfDay)
+        let leadInverterId = actions.first?.inverterId  // First inverter returned is typically lead
+        let leadActions = leadInverterId != nil ? actions.filter { $0.inverterId == leadInverterId! } : actions
 
-        // Calculate sell spot equivalent (what P2P sell would have earned at spot sell prices)
-        let exports = actions.filter { $0.action.lowercased().contains("export") && ($0.energyExport ?? 0) > 0 }
+        // Round timestamps to 5-minute AEMO interval boundaries for matching
+        func roundTo5Min(_ date: Date) -> Date {
+            let ti = date.timeIntervalSince1970
+            return Date(timeIntervalSince1970: (ti / 300.0).rounded(.down) * 300.0)
+        }
+
+        // Per-interval effective sell rate (earnings ÷ export kWh = effective $/kWh including DLF/MLF)
+        // Note: earnings/costs from API are in CENTS, so divide by 100 to get $/kWh
+        var effectiveSellByInterval: [Date: Double] = [:]
+        var effectiveBuyByInterval: [Date: Double] = [:]
+        for action in leadActions {
+            let key = roundTo5Min(action.intervalTime)
+            if let earnings = action.earnings, let exportKwh = action.energyExport, exportKwh > 0.001 {
+                effectiveSellByInterval[key] = (earnings / 100.0) / exportKwh
+            }
+            if let costs = action.costs, let importKwh = action.energyImport, importKwh > 0.001 {
+                effectiveBuyByInterval[key] = (costs / 100.0) / importKwh
+            }
+        }
+
+        // Calculate sell spot equivalent using per-interval effective rates
+        var sellSpotEquivalent: Double = 0
+        var unmatchedSellKwh: Double = 0
+        var matchedSellCount = 0
+        for trade in lvTrades where trade.direction == .sell {
+            let key = roundTo5Min(trade.periodStart)
+            if let effectiveRate = effectiveSellByInterval[key] {
+                sellSpotEquivalent += trade.volumeKwh * effectiveRate
+                matchedSellCount += 1
+            } else {
+                unmatchedSellKwh += trade.volumeKwh
+            }
+        }
+
+        // Calculate buy spot equivalent using per-interval effective rates
+        var buySpotEquivalent: Double = 0
+        var unmatchedBuyKwh: Double = 0
+        var matchedBuyCount = 0
+        for trade in lvTrades where trade.direction == .buy {
+            let key = roundTo5Min(trade.periodStart)
+            if let effectiveRate = effectiveBuyByInterval[key] {
+                buySpotEquivalent += trade.volumeKwh * effectiveRate
+                matchedBuyCount += 1
+            } else {
+                unmatchedBuyKwh += trade.volumeKwh
+            }
+        }
+
+        // For unmatched intervals (or CSV imports), fall back to daily average effective rate
+        let exports = leadActions.filter { ($0.energyExport ?? 0) > 0 && $0.earnings != nil }
         let totalExportKwh = exports.compactMap { $0.energyExport }.reduce(0, +)
         let totalExportEarnings = exports.compactMap { $0.earnings }.reduce(0, +)
-        let avgSpotSellCents = totalExportKwh > 0 ? (totalExportEarnings / totalExportKwh) : 0
-        let sellSpotEquivalent = sellKwh * avgSpotSellCents / 100
+        let avgSellRate = totalExportKwh > 0 ? (totalExportEarnings / 100.0 / totalExportKwh) : 0  // $/kWh
 
-        // Calculate buy spot equivalent (what P2P buy would have cost at spot buy prices)
-        let imports = actions.filter { $0.action.lowercased().contains("import") && ($0.energyImport ?? 0) > 0 }
+        let csvSellKwh = sellKwh - lvTrades.filter { $0.direction == .sell }.reduce(0) { $0 + $1.volumeKwh }
+        if unmatchedSellKwh + csvSellKwh > 0.001 {
+            sellSpotEquivalent += (unmatchedSellKwh + csvSellKwh) * avgSellRate
+        }
+
+        let imports = leadActions.filter { ($0.energyImport ?? 0) > 0 && $0.costs != nil }
         let totalImportKwh = imports.compactMap { $0.energyImport }.reduce(0, +)
         let totalImportCosts = imports.compactMap { $0.costs }.reduce(0, +)
-        let avgSpotBuyCents = totalImportKwh > 0 ? (totalImportCosts / totalImportKwh) : 0
-        let buySpotEquivalent = buyKwh * avgSpotBuyCents / 100
+        let avgBuyRate = totalImportKwh > 0 ? (totalImportCosts / 100.0 / totalImportKwh) : 0  // $/kWh
+
+        let csvBuyKwh = buyKwh - lvTrades.filter { $0.direction == .buy }.reduce(0) { $0 + $1.volumeKwh }
+        if unmatchedBuyKwh + csvBuyKwh > 0.001 {
+            buySpotEquivalent += (unmatchedBuyKwh + csvBuyKwh) * avgBuyRate
+        }
+
+        // NTB placeholder — not yet computed from a reliable source
+        let ntb: Double = 0
+
+        // Debug: show matching stats
+        let sellTradeCount = lvTrades.filter { $0.direction == .sell }.count
+        _ = lvTrades.filter { $0.direction == .buy }.count
+        let sellPremium = sellRevenue - sellSpotEquivalent
+        let buyPremium = buySpotEquivalent - buyCost
+        print("📊 P2P Premium (\(normalizedDate)): sell \(matchedSellCount)/\(sellTradeCount) matched, premium=$\(String(format: "%.2f", sellPremium + buyPremium))")
+        if unmatchedSellKwh > 0.001 || unmatchedBuyKwh > 0.001 {
+            print("  unmatched: sell=\(String(format: "%.3f", unmatchedSellKwh))kWh buy=\(String(format: "%.3f", unmatchedBuyKwh))kWh")
+        }
+
+        // Use settlement data when available (authoritative source)
+        // settle IS spot-only, matchAmount IS P2P revenue (separate, additive)
+        if let cf = getLVCashflowSummary(siteId: siteId, date: normalizedDate),
+           cf.p2pMatchedRevenue > 0.001 || cf.energySoldP2PKwh > 0.001 {
+            sellRevenue = cf.p2pMatchedRevenue
+            sellKwh = cf.energySoldP2PKwh
+            let spotRate = cf.energySoldSpotKwh > 0.001 ? cf.spotEnergyRevenue / cf.energySoldSpotKwh : 0
+            sellSpotEquivalent = spotRate * cf.energySoldP2PKwh
+        }
 
         // Legacy totals for backwards compatibility
         let totalRevenue = sellRevenue  // Only count sell as "revenue"
@@ -364,7 +455,8 @@ extension PowstonDataStore {
             sellSpotEquivalent: sellSpotEquivalent,
             buyCost: buyCost,
             buyKwh: buyKwh,
-            buySpotEquivalent: buySpotEquivalent
+            buySpotEquivalent: buySpotEquivalent,
+            ntb: ntb
         )
     }
     
@@ -382,7 +474,7 @@ extension PowstonDataStore {
     
     /// Calculate P2P premium for a date range (week/month/custom views)
     /// Returns (p2pRevenue, spotEquivalent, premium) summed across all days
-    /// Note: p2pRevenue is ALREADY INCLUDED in Powston's "Sold" figure - this is for memo display
+    /// Note: P2P premium is NOT included in Powston API earnings — it is added by the calculator
     @MainActor
     func calculateP2PPremiumForRange(siteId: Int, from startDate: Date, to endDate: Date) -> (p2pRevenue: Double, spotEquivalent: Double, premium: Double)? {
         var calendar = Calendar.current
@@ -435,75 +527,149 @@ extension PowstonDataStore {
 
     /// Calculate detailed P2P premium for a date range with full sell/buy breakdown
     /// Returns P2PRangeResult with separate sell and buy data for week/month/year/custom views
-    /// Note: p2pRevenue is ALREADY INCLUDED in Powston's "Sold" figure - this is for memo display
+    /// Note: P2P premium is NOT included in Powston API earnings — it is added by the calculator
     /// Combines data from both CSV imports (p2p_trade_records) and LocalVolts API (lv_interval_trades)
     @MainActor
-    func calculateP2PPremiumForRangeDetailed(siteId: Int, from startDate: Date, to endDate: Date) -> P2PRangeResult? {
+    func calculateP2PPremiumForRangeDetailed(siteId: Int, from startDate: Date, to endDate: Date, settlementCutoff: Date? = nil) -> P2PRangeResult? {
         var calendar = Calendar.current
         calendar.timeZone = powstonTimezone()
 
-        // Accumulate totals
+        // Accumulate totals from ONE source — prefer LV interval trades over CSV imports
         var totalSellKwh: Double = 0
         var totalSellRevenue: Double = 0
         var totalBuyKwh: Double = 0
         var totalBuyCost: Double = 0
 
-        // Source 1: CSV imports (p2p_trade_records) - iterate by day for pro-rating
-        var currentDate = calendar.startOfDay(for: startDate)
-        let rangeEnd = calendar.startOfDay(for: endDate)
+        let lvTrades = getLVIntervalTrades(siteId: siteId, from: startDate, to: endDate)
 
-        while currentDate <= rangeEnd {
-            let dayRecords = getP2PTradeRecords(siteId: siteId, from: currentDate, to: currentDate)
-
-            for record in dayRecords {
-                let kwh = record.dayCount == 1 ? record.p2pKwh : record.dailyKwh
-                let revenue = record.dayCount == 1 ? record.p2pRevenue : record.dailyRevenue
-
-                if record.direction == .sell {
-                    totalSellKwh += kwh
-                    totalSellRevenue += revenue
+        if !lvTrades.isEmpty {
+            // Use LV interval trades (canonical source)
+            for trade in lvTrades {
+                if trade.direction == .sell {
+                    totalSellKwh += trade.volumeKwh
+                    totalSellRevenue += trade.revenue
                 } else {
-                    totalBuyKwh += kwh
-                    totalBuyCost += revenue
+                    totalBuyKwh += trade.volumeKwh
+                    totalBuyCost += trade.revenue
                 }
             }
+        } else {
+            // Fallback: CSV imports (p2p_trade_records) - iterate by day for pro-rating
+            var currentDate = calendar.startOfDay(for: startDate)
+            let rangeEnd = calendar.startOfDay(for: endDate)
 
-            currentDate = calendar.date(byAdding: .day, value: 1, to: currentDate) ?? currentDate.addingTimeInterval(86400)
-        }
+            while currentDate <= rangeEnd {
+                let dayRecords = getP2PTradeRecords(siteId: siteId, from: currentDate, to: currentDate)
 
-        // Source 2: LocalVolts API trades (lv_interval_trades)
-        let lvTrades = getLVIntervalTrades(siteId: siteId, from: startDate, to: endDate)
-        for trade in lvTrades {
-            if trade.direction == .sell {
-                totalSellKwh += trade.volumeKwh
-                totalSellRevenue += trade.revenue
-            } else {
-                totalBuyKwh += trade.volumeKwh
-                totalBuyCost += trade.revenue
+                for record in dayRecords {
+                    let kwh = record.dayCount == 1 ? record.p2pKwh : record.dailyKwh
+                    let revenue = record.dayCount == 1 ? record.p2pRevenue : record.dailyRevenue
+
+                    if record.direction == .sell {
+                        totalSellKwh += kwh
+                        totalSellRevenue += revenue
+                    } else {
+                        totalBuyKwh += kwh
+                        totalBuyCost += revenue
+                    }
+                }
+
+                currentDate = calendar.date(byAdding: .day, value: 1, to: currentDate) ?? currentDate.addingTimeInterval(86400)
             }
         }
 
         guard totalSellKwh > 0 || totalBuyKwh > 0 else { return nil }
 
-        // Get average spot prices for the period from action records
+        // Build per-interval effective spot rate from action records (earnings/kWh)
+        // Use lead inverter only to avoid double-counting
         let actions = fetchActions(siteId: siteId, from: startDate, to: endDate)
+        let leadInverterId = actions.first?.inverterId
+        let leadActions = leadInverterId != nil ? actions.filter { $0.inverterId == leadInverterId! } : actions
 
-        // Calculate sell spot equivalent (what P2P sell would have earned at spot sell prices)
-        let exports = actions.filter { $0.action.lowercased().contains("export") && ($0.energyExport ?? 0) > 0 }
+        // Round timestamps to 5-minute AEMO interval boundaries for matching
+        func roundTo5Min(_ date: Date) -> Date {
+            let ti = date.timeIntervalSince1970
+            return Date(timeIntervalSince1970: (ti / 300.0).rounded(.down) * 300.0)
+        }
+
+        // Per-interval effective rate (earnings/kWh after DLF/MLF)
+        var effectiveSellByInterval: [Date: Double] = [:]
+        var effectiveBuyByInterval: [Date: Double] = [:]
+        for action in leadActions {
+            let key = roundTo5Min(action.intervalTime)
+            if let earnings = action.earnings, let exportKwh = action.energyExport, exportKwh > 0.001 {
+                effectiveSellByInterval[key] = (earnings / 100.0) / exportKwh
+            }
+            if let costs = action.costs, let importKwh = action.energyImport, importKwh > 0.001 {
+                effectiveBuyByInterval[key] = (costs / 100.0) / importKwh
+            }
+        }
+
+        // Calculate sell spot equivalent using per-interval effective rates
+        var sellSpotEquivalent: Double = 0
+        var unmatchedSellKwh: Double = 0
+        for trade in lvTrades where trade.direction == .sell {
+            let key = roundTo5Min(trade.periodStart)
+            if let effectiveRate = effectiveSellByInterval[key] {
+                sellSpotEquivalent += trade.volumeKwh * effectiveRate
+            } else {
+                unmatchedSellKwh += trade.volumeKwh
+            }
+        }
+
+        // Calculate buy spot equivalent using per-interval effective rates
+        var buySpotEquivalent: Double = 0
+        var unmatchedBuyKwh: Double = 0
+        for trade in lvTrades where trade.direction == .buy {
+            let key = roundTo5Min(trade.periodStart)
+            if let effectiveRate = effectiveBuyByInterval[key] {
+                buySpotEquivalent += trade.volumeKwh * effectiveRate
+            } else {
+                unmatchedBuyKwh += trade.volumeKwh
+            }
+        }
+
+        // For unmatched intervals (or CSV imports), fall back to daily average effective rate
+        let exports = leadActions.filter { ($0.energyExport ?? 0) > 0 && $0.earnings != nil }
         let totalExportKwh = exports.compactMap { $0.energyExport }.reduce(0, +)
         let totalExportEarnings = exports.compactMap { $0.earnings }.reduce(0, +)
-        let avgSpotSellCents = totalExportKwh > 0 ? (totalExportEarnings / totalExportKwh) : 0
-        let sellSpotEquivalent = totalSellKwh * avgSpotSellCents / 100
+        let avgSellRate = totalExportKwh > 0 ? (totalExportEarnings / 100.0 / totalExportKwh) : 0
 
-        // Calculate buy spot equivalent (what P2P buy would have cost at spot buy prices)
-        let imports = actions.filter { $0.action.lowercased().contains("import") && ($0.energyImport ?? 0) > 0 }
+        let csvSellKwh = totalSellKwh - lvTrades.filter { $0.direction == .sell }.reduce(0) { $0 + $1.volumeKwh }
+        if unmatchedSellKwh + csvSellKwh > 0.001 {
+            sellSpotEquivalent += (unmatchedSellKwh + csvSellKwh) * avgSellRate
+        }
+
+        let imports = leadActions.filter { ($0.energyImport ?? 0) > 0 && $0.costs != nil }
         let totalImportKwh = imports.compactMap { $0.energyImport }.reduce(0, +)
         let totalImportCosts = imports.compactMap { $0.costs }.reduce(0, +)
-        let avgSpotBuyCents = totalImportKwh > 0 ? (totalImportCosts / totalImportKwh) : 0
-        let buySpotEquivalent = totalBuyKwh * avgSpotBuyCents / 100
+        let avgBuyRate = totalImportKwh > 0 ? (totalImportCosts / 100.0 / totalImportKwh) : 0
 
-        // Legacy totals for backwards compatibility
-        let totalRevenue = totalSellRevenue  // Only count sell as "revenue"
+        let csvBuyKwh = totalBuyKwh - lvTrades.filter { $0.direction == .buy }.reduce(0) { $0 + $1.volumeKwh }
+        if unmatchedBuyKwh + csvBuyKwh > 0.001 {
+            buySpotEquivalent += (unmatchedBuyKwh + csvBuyKwh) * avgBuyRate
+        }
+
+        // NTB placeholder — not yet computed from a reliable source
+        let ntb: Double = 0
+
+        // Use settlement data when available (authoritative source)
+        // settle IS spot-only, matchAmount IS P2P revenue (separate, additive)
+        // Cap at settlementCutoff to exclude unfinalized days
+        let settlementEnd = settlementCutoff.map { min(endDate, $0) } ?? endDate
+        let lvCashflows = getLVCashflowSummaries(siteId: siteId, from: startDate, to: settlementEnd)
+        if !lvCashflows.isEmpty {
+            let agg = lvCashflows.aggregated()
+            if agg.p2pMatchedRevenue > 0.001 || agg.energySoldP2PKwh > 0.001 {
+                totalSellRevenue = agg.p2pMatchedRevenue
+                totalSellKwh = agg.energySoldP2PKwh
+                let spotRate = agg.energySoldSpotKwh > 0.001 ? agg.spotEnergyRevenue / agg.energySoldSpotKwh : 0
+                sellSpotEquivalent = spotRate * agg.energySoldP2PKwh
+            }
+        }
+
+        // Legacy totals
+        let totalRevenue = totalSellRevenue
         let spotEquivalent = sellSpotEquivalent
         let premium = totalRevenue - spotEquivalent
 
@@ -516,7 +682,8 @@ extension PowstonDataStore {
             sellSpotEquivalent: sellSpotEquivalent,
             buyCost: totalBuyCost,
             buyKwh: totalBuyKwh,
-            buySpotEquivalent: buySpotEquivalent
+            buySpotEquivalent: buySpotEquivalent,
+            ntb: ntb
         )
     }
 

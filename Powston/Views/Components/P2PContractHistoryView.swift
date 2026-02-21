@@ -802,7 +802,10 @@ struct P2PContractHistoryView: View {
 
         Task {
             do {
-                let orders = try await lvService.fetchOrders(siteId: siteId)
+                // Sync trade history first (needed for contract performance data)
+                try await lvService.syncWeek(siteId: siteId, force: true)
+
+                let orders = try await lvService.fetchOrders(siteId: siteId, force: true)
                 await MainActor.run {
                     lvOrders = orders
 

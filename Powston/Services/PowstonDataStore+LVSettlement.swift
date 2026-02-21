@@ -153,7 +153,7 @@ extension PowstonDataStore {
         }
     }
 
-    /// TEMP DEBUG: Clear all settlement data to force re-fetch with logging
+    /// Clear all settlement data for a site (used by schema migrations to force re-fetch)
     func clearAllSettlementData(siteId: Int) {
         guard let db = dbQueue else { return }
         do {
@@ -162,7 +162,7 @@ extension PowstonDataStore {
                     sql: "DELETE FROM lv_daily_cashflow WHERE site_id = ?",
                     arguments: [siteId]
                 )
-                print("🧹 DEBUG: Cleared ALL settlement data for site \(siteId)")
+                print("🧹 Cleared settlement data for site \(siteId)")
             }
         } catch {
             print("❌ Failed to clear settlement data: \(error)")
@@ -178,7 +178,7 @@ extension PowstonDataStore {
         let todayStr = formatter.string(from: Date())
         do {
             try db.write { db in
-                let count = try db.execute(
+                _ = try db.execute(
                     sql: "DELETE FROM lv_daily_cashflow WHERE site_id = ? AND date > ?",
                     arguments: [siteId, todayStr]
                 )

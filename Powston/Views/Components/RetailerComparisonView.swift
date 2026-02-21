@@ -275,8 +275,16 @@ struct RetailerComparisonView: View {
         }
 
         let importCostDollars = totalImportCost / 100.0
-        let exportRevenueDollars = totalExportRevenue / 100.0
+        var exportRevenueDollars = totalExportRevenue / 100.0
         let dailyChargesDollars = totalDailyCharges / 100.0
+
+        // P2P premium is NOT included in Powston API earnings — add it
+        if let p2pData = dataStore.calculateP2PPremiumForRangeDetailed(
+            siteId: siteId, from: startDate, to: yesterday) {
+            let p2pSellPremium = p2pData.sellRevenue - p2pData.sellSpotEquivalent
+            exportRevenueDollars += p2pSellPremium
+        }
+
         let netCost = importCostDollars - exportRevenueDollars + dailyChargesDollars
 
         let avgImportPrice = totalImportKwh > 0 ? totalImportCost / totalImportKwh : 0

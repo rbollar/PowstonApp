@@ -287,7 +287,7 @@ extension Array where Element == LVSettlementRecord {
         let energySoldSpot = exports.reduce(0.0) { $0 + ($1.volume - $1.matchEnergy) }
         let energySoldP2P = exports.reduce(0.0) { $0 + $1.matchEnergy }
 
-        // Import costs (purchases)
+        // Import costs (purchases) — settle is spot, matchAmount is P2P (separate, additive)
         let spotCost = imports.reduce(0.0) { $0 + $1.settle + $1.matchAmount }
         let networkEnergy = imports.reduce(0.0) { $0 + $1.networkEnergy }
         let certificates = imports.reduce(0.0) { $0 + $1.certificateAmt }

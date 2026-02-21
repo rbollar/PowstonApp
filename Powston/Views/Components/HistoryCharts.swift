@@ -597,7 +597,7 @@ struct SavingsAnalysisCard: View {
                 Image(systemName: analysis.actualCost <= 0 ? "checkmark.circle.fill" : "dollarsign.circle.fill")
                     .foregroundColor(analysis.actualCost <= 0 ? .green : .orange)
                     .frame(width: 20)
-                Text(analysis.actualCost <= 0 ? "Actual benefit:" : "Actual cost:")
+                Text(analysis.actualCost <= 0 ? "Actual profit:" : "Actual cost:")
                     .font(.subheadline)
                     .fontWeight(.medium)
                 Spacer()
@@ -607,7 +607,7 @@ struct SavingsAnalysisCard: View {
             }
             
             // P2P Sell memo line (shown indented under Actual benefit when P2P sell data exists)
-            // P2P revenue is already included in Actual - this shows the breakdown
+            // P2P premium is added by the calculator — this shows the breakdown
             if analysis.hasP2PSellData {
                 HStack(spacing: 4) {
                     Text("└")
@@ -736,6 +736,38 @@ struct SavingsAnalysisCard: View {
                 .padding(.leading, 4)
             }
             
+            // Powston API reported result — memo line (may differ slightly from LV settlement)
+            if let powstonCost = analysis.powstonAPINetCost {
+                HStack {
+                    Image(systemName: "server.rack")
+                        .foregroundColor(.secondary)
+                        .frame(width: 20)
+                    Text(powstonCost <= 0 ? "Powston profit:" : "Powston cost:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text(formatCurrency(powstonCost))
+                        .font(.caption.monospacedDigit())
+                        .foregroundColor(.secondary)
+                }
+
+                // NTB (Needed to Balance) — DLF/MLF adjustment memo
+                if abs(analysis.p2pNTB) > 0.005 {
+                    HStack {
+                        Image(systemName: "plusminus")
+                            .foregroundColor(.secondary)
+                            .frame(width: 20)
+                        Text("NTB (loss factors):")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(formatCurrency(-analysis.p2pNTB))
+                            .font(.caption.monospacedDigit())
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+
             // Flat rate comparison
             HStack {
                 Image(systemName: "equal.circle.fill")
@@ -783,6 +815,94 @@ struct SavingsAnalysisCard: View {
                     Text("Based on \(tariffDesc)")
                         .font(.caption2)
                         .foregroundColor(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(Color.gray.opacity(0.05))
+        .cornerRadius(12)
+    }
+}
+
+// MARK: - P2P Counterparty Summary Card (standalone, when SavingsAnalysis is unavailable)
+
+struct P2PCounterpartySummaryCard: View {
+    let counterparties: [P2PCounterpartyTrade]
+    var importDateRange: String? = nil
+
+    private struct Aggregated: Identifiable {
+        let id = UUID()
+        let name: String
+        let totalVolume: Double
+        let avgPriceCents: Double
+        let direction: P2PTradeDirection
+    }
+
+    private func aggregate(_ trades: [P2PCounterpartyTrade]) -> [Aggregated] {
+        Dictionary(grouping: trades) { $0.counterpartyName }.compactMap { (name, trades) in
+            let vol = trades.reduce(0) { $0 + $1.volumeKwh }
+            let rev = trades.reduce(0) { $0 + $1.volumeKwh * $1.priceCents }
+            return Aggregated(name: name, totalVolume: vol, avgPriceCents: vol > 0 ? rev / vol : 0, direction: trades.first?.direction ?? .sell)
+        }.sorted { $0.totalVolume > $1.totalVolume }
+    }
+
+    var body: some View {
+        let sells = aggregate(counterparties.filter { $0.direction == .sell })
+        let buys = aggregate(counterparties.filter { $0.direction == .buy })
+        let totalSellKwh = sells.reduce(0) { $0 + $1.totalVolume }
+        let totalBuyKwh = buys.reduce(0) { $0 + $1.totalVolume }
+
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "person.2.fill")
+                    .foregroundColor(.purple)
+                Text("P2P Trading")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Spacer()
+            }
+
+            Divider()
+
+            if !sells.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.circle.fill").font(.caption2).foregroundColor(.green)
+                    Text("Sold \(String(format: "%.1f", totalSellKwh)) kWh to \(sells.count) buyer\(sells.count == 1 ? "" : "s")")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+                ForEach(sells.prefix(5)) { cp in
+                    HStack(spacing: 4) {
+                        Text("").frame(width: 16)
+                        let classifier = P2PCounterpartyClassifier.shared
+                        Image(systemName: classifier.isCommercial(cp.name) ? "building.2.fill" : "house.fill")
+                            .font(.system(size: 9)).foregroundColor(.secondary).frame(width: 14)
+                        Text(cp.name).font(.caption2).lineLimit(1).foregroundColor(.secondary)
+                        Spacer()
+                        Text(String(format: "%.2f kWh", cp.totalVolume)).font(.caption2.monospacedDigit()).foregroundColor(.green)
+                        Text(String(format: "%.0f¢", cp.avgPriceCents)).font(.caption2.monospacedDigit()).foregroundColor(.secondary).frame(width: 30, alignment: .trailing)
+                    }
+                }
+            }
+
+            if !buys.isEmpty {
+                if !sells.isEmpty { Divider() }
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.down.circle.fill").font(.caption2).foregroundColor(.orange)
+                    Text("Bought \(String(format: "%.1f", totalBuyKwh)) kWh from \(buys.count) seller\(buys.count == 1 ? "" : "s")")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+                ForEach(buys.prefix(5)) { cp in
+                    HStack(spacing: 4) {
+                        Text("").frame(width: 16)
+                        let classifier = P2PCounterpartyClassifier.shared
+                        Image(systemName: classifier.isCommercial(cp.name) ? "building.2.fill" : "house.fill")
+                            .font(.system(size: 9)).foregroundColor(.secondary).frame(width: 14)
+                        Text(cp.name).font(.caption2).lineLimit(1).foregroundColor(.secondary)
+                        Spacer()
+                        Text(String(format: "%.2f kWh", cp.totalVolume)).font(.caption2.monospacedDigit()).foregroundColor(.orange)
+                        Text(String(format: "%.0f¢", cp.avgPriceCents)).font(.caption2.monospacedDigit()).foregroundColor(.secondary).frame(width: 30, alignment: .trailing)
+                    }
                 }
             }
         }

@@ -95,7 +95,6 @@ struct PeerPowerView: View {
     @EnvironmentObject var api: PowstonAPI
     @StateObject private var analysis = PeerPowerAnalysis()
     @StateObject private var lvService = LocalVoltsService.shared
-    @State private var showImportSheet = false
     @State private var showLVSetup = false  // For LV credentials setup
     @State private var selectedTab: PeerPowerTab = .analysis
     @State private var viewMode: P2PViewMode = .selling  // Selling or Buying analysis mode
@@ -217,21 +216,7 @@ struct PeerPowerView: View {
                 showP2POnboarding = false
             })
         }
-        // Manual CSV import hidden - using LocalVolts API instead
-        // Keep code in case LV API changes and we need to revert
-        // .toolbar {
-        //     ToolbarItem(placement: .topBarTrailing) {
-        //         Button(action: { showImportSheet = true }) {
-        //             Image(systemName: "square.and.arrow.down")
-        //         }
-        //     }
-        // }
-        // .sheet(isPresented: $showImportSheet, onDismiss: {
-        //     // Refresh tabs after import completes
-        //     refreshTrigger = UUID()
-        // }) {
-        //     P2PTradeImportView()
-        // }
+        // Manual CSV import available via P2PTradeImportView if needed
     }
 
     // Returns display name for tab - counterparties tab is dynamic based on trade direction
@@ -3541,17 +3526,6 @@ struct PeerPowerView: View {
     
     private func footerView(_ result: PeerPowerResult) -> some View {
         VStack(spacing: 12) {
-            // Manual import hidden - using LocalVolts API instead
-            // Button(action: { showImportSheet = true }) {
-            //     Label("Import Trade from LocalVolts", systemImage: "square.and.arrow.down")
-            //         .font(.subheadline)
-            //         .frame(maxWidth: .infinity)
-            //         .padding()
-            //         .background(Color.purple.opacity(0.15))
-            //         .foregroundColor(.purple)
-            //         .cornerRadius(12)
-            // }
-
             Button(action: runAnalysis) {
                 Label("Refresh Analysis", systemImage: "arrow.clockwise")
                     .font(.subheadline)
@@ -3620,13 +3594,22 @@ struct PeerPowerView: View {
 
     /// Sync trade history directly from LocalVolts API
     private func syncLVTrades() {
-        guard let siteId = api.selectedSite?.id else { return }
-        guard !lvService.isSyncing else { return }
+        guard let siteId = api.selectedSite?.id else {
+            print("📊 syncLVTrades: no siteId")
+            return
+        }
+        guard !lvService.isSyncing else {
+            print("📊 syncLVTrades: already syncing, skipped")
+            return
+        }
 
+        print("📊 syncLVTrades: starting (siteId=\(siteId))")
         Task {
             do {
                 // Sync last 7 days of trades
+                print("📊 syncLVTrades: calling syncWeek...")
                 try await lvService.syncWeek(siteId: siteId, force: true)
+                print("📊 syncLVTrades: syncWeek done, calling fetchOrders...")
 
                 // Also sync orders/contracts
                 _ = try await lvService.fetchOrders(siteId: siteId, force: true)

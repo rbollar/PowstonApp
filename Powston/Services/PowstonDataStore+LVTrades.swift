@@ -84,22 +84,49 @@ extension PowstonDataStore {
     }
 
     /// Save LV interval trades in batch (more efficient for large imports)
+    /// Settled trades (yesterday and older) are immutable — only replaced if we have fresh data for that date.
+    /// Today/future trades are always replaced (still settling).
     func saveLVIntervalTradesBatch(_ trades: [LVIntervalTrade], siteId: Int, from: Date, to: Date) throws {
         guard let db = dbQueue, !trades.isEmpty else { return }
 
-        try db.write { db in
-            // Delete existing trades in the date range first
-            try db.execute(
-                sql: """
-                    DELETE FROM lv_interval_trades
-                    WHERE site_id = ? AND period_start >= ? AND period_start <= ?
-                    """,
-                arguments: [siteId, from, to]
-            )
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = powstonTimezone()
+        let todayStart = calendar.startOfDay(for: Date())
 
-            // Insert all new trades
-            for trade in trades {
-                try trade.save(db)
+        // Group all trades by date
+        let tradesByDate = Dictionary(grouping: trades) { trade in
+            calendar.startOfDay(for: trade.periodStart)
+        }
+
+        try db.write { db in
+            for (dayStart, dayTrades) in tradesByDate {
+                let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart)!
+                let isSettled = dayStart < todayStart
+
+                if isSettled {
+                    // Historical: only replace if no existing data for this date
+                    let existingCount = try Int.fetchOne(
+                        db,
+                        sql: "SELECT COUNT(*) FROM lv_interval_trades WHERE site_id = ? AND period_start >= ? AND period_start < ?",
+                        arguments: [siteId, dayStart, dayEnd]
+                    ) ?? 0
+
+                    if existingCount > 0 {
+                        continue  // Settled data is immutable — skip
+                    }
+                }
+
+                // Delete existing + insert new (for mutable dates, or empty historical dates)
+                try db.execute(
+                    sql: """
+                        DELETE FROM lv_interval_trades
+                        WHERE site_id = ? AND period_start >= ? AND period_start < ?
+                        """,
+                    arguments: [siteId, dayStart, dayEnd]
+                )
+                for trade in dayTrades {
+                    try trade.save(db)
+                }
             }
         }
 

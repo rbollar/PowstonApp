@@ -295,16 +295,6 @@ class LocalVoltsSocketClient {
 
     /// Parse identity response result sets and extract settlement data
     private func parseIdentityResultSets(_ results: [Any]) {
-        print("📊 Identity: \(results.count) result sets")
-
-        // result[1] contains the reportList mapping
-        if results.count > 1,
-           let configArray = results[1] as? [Any],
-           let config = configArray.first as? [String: Any],
-           let reportList = config["reportList"] as? String {
-            print("📊 Identity reportList: \(reportList)")
-        }
-
         // Find and parse settlement data (has "settle" + "volume" + "profile" fields)
         if let idx = findSettlementIndex(results) {
             let arr = results[idx] as! [Any]
@@ -327,7 +317,6 @@ class LocalVoltsSocketClient {
             guard let arr = raw as? [Any], arr.count > 10,
                   let first = arr.first as? [String: Any] else { continue }
             if first["settle"] != nil && first["volume"] != nil && first["profile"] != nil {
-                print("📊 Settlement candidate: index=\(idx), count=\(arr.count)")
                 if arr.count > bestCount {
                     bestCount = arr.count
                     bestIdx = idx
@@ -340,23 +329,9 @@ class LocalVoltsSocketClient {
         return bestIdx
     }
 
-    /// Log a cashflow summary matching the LV dashboard format
+    /// Log a one-line cashflow summary
     private func logCashflowSummary(_ s: LVCashflowSummary, label: String) {
-        print("💰 LV Cashflow Breakdown (\(label)):")
-        print("💰   Net Costs: $\(String(format: "%.2f", s.netCosts))")
-        print("💰   All Purchases: $\(String(format: "%.2f", s.totalPurchases))")
-        print("💰     Spot Energy: $\(String(format: "%.2f", s.spotEnergyCost))")
-        print("💰     Network Energy: $\(String(format: "%.2f", s.networkEnergyCost))")
-        print("💰     Network Access: $\(String(format: "%.2f", s.networkAccessCost))")
-        print("💰     Certificates: $\(String(format: "%.2f", s.certificatesCost))")
-        print("💰     LocalVolts Fee: $\(String(format: "%.2f", s.localvoltsFee))")
-        print("💰   All Sales: $\(String(format: "%.2f", s.totalSales))")
-        print("💰     Spot Energy: $\(String(format: "%.2f", s.spotEnergyRevenue))")
-        print("💰     P2P Matched: $\(String(format: "%.2f", s.p2pMatchedRevenue))")
-        print("💰   Energy Purchased: \(String(format: "%.2f", s.energyPurchasedKwh)) kWh")
-        print("💰   Energy Sold: \(String(format: "%.2f", s.energySoldTotalKwh)) kWh (Spot \(String(format: "%.2f", s.energySoldSpotKwh)), P2P \(String(format: "%.2f", s.energySoldP2PKwh)))")
-        print("💰   Emissions: \(String(format: "%.2f", s.emissions)) kgCO2e")
-        print("💰   Records: \(s.records)")
+        print("💰 LV \(label): net=$\(String(format: "%.2f", -s.netCosts)), sold=$\(String(format: "%.2f", s.totalSales)), bought=$\(String(format: "%.2f", s.totalPurchases)), \(s.records) records")
     }
 
     private func parsePeriodTimestamp(from dict: [String: Any]) -> Date? {
@@ -426,10 +401,6 @@ class LocalVoltsSocketClient {
                    let resultsRaw = content["aobjResults"] as? [Any] {
 
                     if routingKey.contains("QtyReport") {
-                        // Log reportList mapping (index → data type)
-                        if let reportList = content["reportList"] as? String {
-                            print("📊 QtyReport reportList: \(reportList)")
-                        }
                         self.parseQtyReportTrades(resultsRaw)
                     } else if routingKey.contains("ContractTable") {
                         self.parseContractTableResponse(resultsRaw)
@@ -467,10 +438,8 @@ class LocalVoltsSocketClient {
         var trades: [LVIntervalTrade] = []
         let fetchedAt = Date()
 
-        print("📊 QtyReport: parsing \(results.count) result sets")
-
         // Extract P2P trades from all result sets that have counterparty data
-        for (index, resultRaw) in results.enumerated() {
+        for (_, resultRaw) in results.enumerated() {
             guard let resultSet = resultRaw as? [Any], !resultSet.isEmpty,
                   let firstDict = resultSet.first as? [String: Any] else {
                 continue
@@ -494,7 +463,6 @@ class LocalVoltsSocketClient {
                         trades.append(trade)
                     }
                 }
-                print("📊 QtyReport result[\(index)]: \(trades.count) P2P trades")
             }
         }
 
@@ -510,7 +478,6 @@ class LocalVoltsSocketClient {
                     logCashflowSummary(summary, label: "QtyReport \(String(date.prefix(10)))")
                 }
                 onSettlementReceived?(allSettlement)
-                print("📊 QtyReport: \(trades.count) trades, \(allSettlement.count) settlement records")
             }
         }
 

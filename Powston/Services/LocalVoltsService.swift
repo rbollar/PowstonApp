@@ -287,7 +287,6 @@ class LocalVoltsService: ObservableObject {
     /// Fetch trades for a date range
     /// Identity response contains today's trades; historical data requires separate request
     func fetchTrades(siteId: Int, from: Date, to: Date) async throws -> [LVIntervalTrade] {
-        print("📊 fetchTrades called: from=\(from) to=\(to), connected=\(connectionStatus.isConnected)")
         isSyncing = true
 
         // Connect if needed - this sends identity request and receives trades
@@ -295,9 +294,6 @@ class LocalVoltsService: ObservableObject {
             connectionStatus = .connecting
             receivedTrades = []  // Clear before connecting
             try await connect(siteId: siteId)
-            print("📊 fetchTrades: connected, receivedTrades=\(receivedTrades.count)")
-        } else {
-            print("📊 fetchTrades: already connected, receivedTrades=\(receivedTrades.count)")
         }
 
         guard socketClient?.isConnected == true else {
@@ -323,8 +319,6 @@ class LocalVoltsService: ObservableObject {
         let needsHistorical = from < todayStart
         let needsForecast = to >= tomorrowStart
         let needsDataRequest = needsHistorical || needsForecast
-
-        print("📊 fetchTrades: needsHistorical=\(needsHistorical) (from=\(from) < todayStart=\(todayStart)), needsForecast=\(needsForecast), needsDataRequest=\(needsDataRequest)")
 
         if needsDataRequest {
             // Reconnect with userId_sessionId suffix so server can route response back
@@ -354,24 +348,8 @@ class LocalVoltsService: ObservableObject {
             }
         }
 
-        // If we got trades from the identity response, use them
-        if receivedTrades.isEmpty {
-            print("⚠️ No trades received from identity response")
-        }
-
         isSyncing = false
         connectionStatus = .connected
-
-        // Debug: Log date range and sample trade dates
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        print("📅 Requested date range: \(formatter.string(from: from)) to \(formatter.string(from: to))")
-        if let firstTrade = receivedTrades.first {
-            print("📅 First trade date: \(formatter.string(from: firstTrade.periodStart))")
-        }
-        if let lastTrade = receivedTrades.last {
-            print("📅 Last trade date: \(formatter.string(from: lastTrade.periodStart))")
-        }
 
         // Save received trades (filter to requested date range)
         let filteredTrades = receivedTrades.filter { trade in
@@ -384,14 +362,6 @@ class LocalVoltsService: ObservableObject {
             lastSyncTime = Date()
             updateTradeCount()
             print("💾 Saved \(filteredTrades.count) trades for date range")
-        } else if !receivedTrades.isEmpty {
-            // We have trades but not in the requested range
-            print("📊 Received \(receivedTrades.count) trades but none in requested date range")
-            // Debug: show actual range of received trades
-            let tradeDates = receivedTrades.map { $0.periodStart }.sorted()
-            if let earliest = tradeDates.first, let latest = tradeDates.last {
-                print("📅 Trade range: \(formatter.string(from: earliest)) to \(formatter.string(from: latest))")
-            }
         }
 
         // Disconnect socket when done - no need to keep connection open
@@ -420,10 +390,8 @@ class LocalVoltsService: ObservableObject {
     /// Sync last 7 days (full refresh)
     /// Respects throttle - throws if called too frequently
     func syncWeek(siteId: Int, force: Bool = false) async throws {
-        print("📊 syncWeek called (force=\(force))")
         guard force || canPerform(.syncTrades) else {
             let remaining = cooldownRemaining(.syncTrades)
-            print("📊 syncWeek THROTTLED (\(remaining)s remaining)")
             throw ServiceError.throttled(seconds: remaining)
         }
 
@@ -435,9 +403,45 @@ class LocalVoltsService: ObservableObject {
         let today = Date()
         let weekAgo = calendar.date(byAdding: .day, value: -7, to: today)!
 
-        print("📊 syncWeek: fetching trades from \(weekAgo) to \(today)")
         _ = try await fetchTrades(siteId: siteId, from: weekAgo, to: today)
-        print("📊 syncWeek: complete")
+    }
+
+    /// Force re-fetch all historical P2P trades (clears existing and re-fetches via QtyReport)
+    /// Use when trade data has been lost/corrupted
+    func refetchAllTrades(siteId: Int) async -> Int {
+        guard hasCredentials else { return 0 }
+
+        var calendar = Calendar.current
+        calendar.timeZone = TimeZone(identifier: "Australia/Brisbane") ?? .current
+        let today = calendar.startOfDay(for: Date())
+        let maxLookback = calendar.date(byAdding: .day, value: -60, to: today) ?? today
+
+        // Clear all existing trade data so INSERT OR IGNORE doesn't skip anything
+        dataStore.clearLVTrades(siteId: siteId)
+        print("🔄 Refetching all P2P trades from \(maxLookback) to \(today)...")
+
+        var totalFetched = 0
+        let chunkSize = 7  // 7 days per chunk to get detailed trade data
+        var chunkStart = maxLookback
+
+        while chunkStart < today {
+            let chunkEnd = min(calendar.date(byAdding: .day, value: chunkSize, to: chunkStart) ?? today, today)
+
+            do {
+                let trades = try await fetchTrades(siteId: siteId, from: chunkStart, to: chunkEnd)
+                totalFetched += trades.count
+                print("📊 Refetch chunk: \(trades.count) trades for \(chunkStart) to \(chunkEnd)")
+            } catch {
+                print("⚠️ Refetch chunk failed: \(error.localizedDescription)")
+            }
+
+            chunkStart = chunkEnd
+            // Brief pause between chunks
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+
+        print("✅ Refetched \(totalFetched) total P2P trades")
+        return totalFetched
     }
 
     // MARK: - Data Access
@@ -755,14 +759,15 @@ class LocalVoltsService: ObservableObject {
     func performDailySyncIfNeeded(siteId: Int) async {
         guard hasCredentials else { return }
 
-        // v11 migration: include import P2P matched cost in spotCost; fix networkAccess via LV fee ratio
+        // v13 migration: revert v12 — settle and matchAmount ARE separate additive fields
+        // (confirmed from portal: Spot Energy + P2P Matched = All Sales)
         let settlementVersion = UserDefaults.standard.integer(forKey: "lv_settlement_schema_version")
-        let needsRefresh = settlementVersion < 11
+        let needsRefresh = settlementVersion < 13
         if needsRefresh {
             dataStore.clearAllSettlementData(siteId: siteId)
             UserDefaults.standard.removeObject(forKey: "lv_earliest_settlement_date_\(siteId)")
-            UserDefaults.standard.set(11, forKey: "lv_settlement_schema_version")
-            print("📊 Settlement v11 migration: cleared data, re-fetch with import P2P cost included")
+            UserDefaults.standard.set(13, forKey: "lv_settlement_schema_version")
+            print("📊 Settlement v13 migration: restore correct settle+matchAmount (additive, not subset)")
         }
 
         let needsOrdersSync = needsDailyOrdersSync(siteId: siteId)
@@ -862,12 +867,7 @@ class LocalVoltsService: ObservableObject {
             checkDate = calendar.date(byAdding: .day, value: 1, to: checkDate) ?? effectiveTo
         }
 
-        guard !missingDates.isEmpty else {
-            print("📊 Settlement on-demand: all \(existingDates.count) dates cached for range")
-            return 0
-        }
-
-        print("📊 Settlement on-demand: \(missingDates.count) days missing, fetching...")
+        guard !missingDates.isEmpty else { return 0 }
 
         var newDaysFetched = 0
 
@@ -883,7 +883,6 @@ class LocalVoltsService: ObservableObject {
                 _ = try await fetchTrades(siteId: siteId, from: chunkFrom, to: chunkTo)
                 let daysInChunk = chunkEnd - chunkStart
                 newDaysFetched += daysInChunk
-                print("📊 Settlement on-demand chunk: \(formatter.string(from: chunkFrom)) to \(formatter.string(from: chunkTo))")
             } catch {
                 print("⚠️ Settlement on-demand failed for chunk: \(error.localizedDescription)")
                 break  // Don't hammer the server
@@ -924,12 +923,7 @@ class LocalVoltsService: ObservableObject {
             checkDate = calendar.date(byAdding: .day, value: 1, to: checkDate) ?? today
         }
 
-        guard !missingDates.isEmpty else {
-            print("📊 Settlement backfill: all dates covered")
-            return
-        }
-
-        print("📊 Settlement backfill: \(missingDates.count) days missing, fetching...")
+        guard !missingDates.isEmpty else { return }
 
         // Request in chunks of 30 days to avoid huge responses
         let chunkSize = 30
@@ -939,9 +933,7 @@ class LocalVoltsService: ObservableObject {
             let to = missingDates[chunkEnd - 1]
 
             do {
-                // fetchTrades triggers QtyReport which returns settlement data
                 _ = try await fetchTrades(siteId: siteId, from: from, to: to)
-                print("📊 Settlement backfill chunk: \(formatter.string(from: from)) to \(formatter.string(from: to))")
             } catch {
                 print("⚠️ Settlement backfill failed for chunk: \(error.localizedDescription)")
                 break  // Don't hammer the server if something's wrong
@@ -967,13 +959,6 @@ class LocalVoltsService: ObservableObject {
         // Group by date PREFIX (first 10 chars) — not full date string, because
         // QtyReport may return different time components for same-day records
         let byDate = Dictionary(grouping: filtered) { String($0.date.prefix(10)) }
-
-        // Log settlement summary
-        for (date, dayRecords) in byDate.sorted(by: { $0.key < $1.key }) {
-            let imports = dayRecords.filter { $0.isImport }
-            let exports = dayRecords.filter { $0.isExport }
-            print("📊 Settlement \(date): \(imports.count) imports, \(exports.count) exports (\(dayRecords.count) total)")
-        }
 
         let summaries = byDate.values.map { $0.cashflowSummary() }
 

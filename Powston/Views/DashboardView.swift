@@ -789,17 +789,26 @@ struct TodayPLCard: View {
         let records = await api.fetchMeterRecords(fromDate: yesterday, toDate: yesterday)
         
         dataDate = yesterday
-        
+
         if !records.isEmpty {
             let earnings = records.compactMap { $0.earnings }.reduce(0, +) / 100.0
             let costs = records.compactMap { $0.costs }.reduce(0, +) / 100.0
             todayNet = earnings - costs
+
+            // P2P premium is NOT included in Powston API earnings — add it
+            if let siteId = api.selectedSiteId,
+               let p2p = PowstonDataStore.shared.calculateP2PPremium(siteId: siteId, date: yesterday) {
+                let p2pAdjustment = (p2p.sellRevenue - p2p.sellSpotEquivalent) + (p2p.buySpotEquivalent - p2p.buyCost)
+                if abs(p2pAdjustment) > 0.001 {
+                    todayNet = (todayNet ?? 0) + p2pAdjustment
+                }
+            }
         } else {
             todayNet = nil
         }
         isLoading = false
     }
-    
+
     func formatCurrency(_ value: Double) -> String {
         let absValue = abs(value)
         let prefix = value >= 0 ? "+$" : "-$"
@@ -904,17 +913,26 @@ struct DetailedPLCard: View {
         let records = await api.fetchMeterRecords(fromDate: yesterday, toDate: yesterday)
         
         dataDate = yesterday
-        
+
         if !records.isEmpty {
             let earnings = records.compactMap { $0.earnings }.reduce(0, +) / 100.0
             let costs = records.compactMap { $0.costs }.reduce(0, +) / 100.0
             todayNet = earnings - costs
+
+            // P2P premium is NOT included in Powston API earnings — add it
+            if let siteId = api.selectedSiteId,
+               let p2p = PowstonDataStore.shared.calculateP2PPremium(siteId: siteId, date: yesterday) {
+                let p2pAdjustment = (p2p.sellRevenue - p2p.sellSpotEquivalent) + (p2p.buySpotEquivalent - p2p.buyCost)
+                if abs(p2pAdjustment) > 0.001 {
+                    todayNet = (todayNet ?? 0) + p2pAdjustment
+                }
+            }
         } else {
             todayNet = nil
         }
         isLoading = false
     }
-    
+
     func formatCurrency(_ value: Double) -> String {
         let absValue = abs(value)
         let prefix = value >= 0 ? "+$" : "-$"
@@ -1055,13 +1073,22 @@ struct CompactPLIndicator: View {
                 let earnings = records.compactMap { $0.earnings }.reduce(0, +) / 100.0
                 let costs = records.compactMap { $0.costs }.reduce(0, +) / 100.0
                 todayNet = earnings - costs
+
+                // P2P premium is NOT included in Powston API earnings — add it
+                if let siteId = api.selectedSiteId,
+                   let p2p = PowstonDataStore.shared.calculateP2PPremium(siteId: siteId, date: targetDate) {
+                    let p2pAdjustment = (p2p.sellRevenue - p2p.sellSpotEquivalent) + (p2p.buySpotEquivalent - p2p.buyCost)
+                    if abs(p2pAdjustment) > 0.001 {
+                        todayNet = (todayNet ?? 0) + p2pAdjustment
+                    }
+                }
             } else {
                 todayNet = nil
             }
             isLoading = false
         }
     }
-    
+
     func formatCurrency(_ value: Double) -> String {
         let absValue = abs(value)
         let prefix = value >= 0 ? "+$" : "-$"
