@@ -21,6 +21,10 @@ struct P2PSummaryData {
     var buySpotEquivalent: Double = 0
     var premiumPerKwh: Double = 0       // cents/kWh above spot
 
+    // Trend (current vs previous window)
+    var previousPremium: Double?        // nil = no previous data
+    var premiumTrend: Double = 0        // positive = improving
+
     // Period
     var periodDays: Int = 0
     var periodDescription: String = ""
@@ -31,8 +35,14 @@ struct P2PSummaryData {
     var buyOfferedKwh: Double = 0
     var buySubscribedKwh: Double = 0
 
-    // Sparkline buckets (6 values, each = average fill% for a 4-week bucket)
+    // Value row
+    var settledValue: Double = 0        // revenue from delivered trades
+    var upcomingValue: Double = 0       // contracted, delivery window still open
+    var undeliveredValue: Double = 0    // contracted, delivery window passed
+
+    // Sparkline buckets (average fill% per 4-week bucket, trailing empties trimmed)
     var fillBuckets: [Double] = []
+    var fillBucketLabels: [String] = []
 
     // Insight
     var insightText: String?
@@ -58,7 +68,7 @@ func loadP2PSummaryData(api: PowstonAPI) -> P2PSummaryData? {
 
     let store = PowstonDataStore.shared
 
-    // Premium calculation
+    // Premium calculation — current window
     guard let result = store.calculateP2PPremiumForRangeDetailed(
         siteId: siteId,
         from: rangeStart,
@@ -79,6 +89,21 @@ func loadP2PSummaryData(api: PowstonAPI) -> P2PSummaryData? {
     data.premiumPerKwh = result.sellKwh > 0.001
         ? ((result.sellRevenue - result.sellSpotEquivalent) / result.sellKwh) * 100
         : 0
+
+    // Trend — previous 7-day window
+    if let prevEnd = calendar.date(byAdding: .day, value: -1, to: rangeStart),
+       let prevStart = calendar.date(byAdding: .day, value: -6, to: prevEnd) {
+        let prevResult = store.calculateP2PPremiumForRangeDetailed(
+            siteId: siteId,
+            from: prevStart,
+            to: prevEnd,
+            settlementCutoff: cutoff
+        )
+        if let prev = prevResult {
+            data.previousPremium = prev.premium
+            data.premiumTrend = result.premium - prev.premium
+        }
+    }
 
     // Period
     let days = (calendar.dateComponents([.day], from: rangeStart, to: rangeEnd).day ?? 0) + 1
@@ -113,7 +138,23 @@ func loadP2PSummaryData(api: PowstonAPI) -> P2PSummaryData? {
         }
     }
 
-    // Fill sparkline: group active sell order groups by weeks-out into 6 buckets of 4 weeks
+    // Value row — aggregate settled/upcoming/undelivered across all groups
+    let allGroups: [(LVOrderGroup, P2PContractPerformance?)] =
+        sellGroups.map { ($0, sellPerfs[$0.id]) } +
+        buyGroups.map { ($0, buyPerfs[$0.id]) }
+
+    for (group, perf) in allGroups {
+        guard let perf = perf else { continue }
+        data.settledValue += perf.actualRevenue
+        if group.dateTo > today {
+            data.upcomingValue += perf.provisionalRevenue
+        } else {
+            data.undeliveredValue += perf.provisionalRevenue
+        }
+    }
+
+    // Fill sparkline: group sell order groups by weeks-out into 6 buckets of 4 weeks
+    let allLabels = ["0-4w", "4-8w", "8-12w", "12-16w", "16-20w", "20w+"]
     if !sellGroups.isEmpty {
         var buckets: [[Double]] = Array(repeating: [], count: 6)
 
@@ -130,12 +171,24 @@ func loadP2PSummaryData(api: PowstonAPI) -> P2PSummaryData? {
             }
         }
 
-        data.fillBuckets = buckets.map { values in
-            values.isEmpty ? 0 : values.reduce(0, +) / Double(values.count)
+        // Compute averages and trim trailing empty buckets
+        var averages = buckets.map { values in
+            values.isEmpty ? -1.0 : values.reduce(0, +) / Double(values.count)
+        }
+
+        // Find last bucket that has orders (not empty)
+        let lastPopulated = averages.lastIndex(where: { $0 >= 0 }) ?? -1
+        if lastPopulated >= 0 {
+            // Replace -1 (no orders in bucket) with 0, trim trailing empties
+            let trimmed = Array(averages.prefix(lastPopulated + 1))
+            data.fillBuckets = trimmed.map { $0 < 0 ? 0 : $0 }
+            data.fillBucketLabels = Array(allLabels.prefix(lastPopulated + 1))
         }
     }
 
-    // Insight detection — check price changes on sell orders
+    // Insight detection — priority ordered
+
+    // Priority 1: Repricing events (sell price UP or buy price DOWN)
     data.insightText = nil
     data.insightType = .default
 
@@ -148,15 +201,13 @@ func loadP2PSummaryData(api: PowstonAPI) -> P2PSummaryData? {
 
         if let prevPrice = prev.priceCents, let currPrice = curr.priceCents, abs(currPrice - prevPrice) > 0.01 {
             if currPrice > prevPrice {
-                // Sell price UP → notable
-                data.insightText = String(format: "Sell ceiling probed higher: %.1f→%.1f¢", prevPrice, currPrice)
+                data.insightText = String(format: "Sell ceiling probed higher: %.1f\u{2192}%.1f\u{00A2}", prevPrice, currPrice)
                 data.insightType = .repricing
                 break
             }
         }
     }
 
-    // If no sell repricing found, check buy orders
     if data.insightText == nil {
         for order in buyOrders.prefix(10) {
             let history = store.getContractSnapshots(orderId: order.id)
@@ -167,8 +218,7 @@ func loadP2PSummaryData(api: PowstonAPI) -> P2PSummaryData? {
 
             if let prevPrice = prev.priceCents, let currPrice = curr.priceCents, abs(currPrice - prevPrice) > 0.01 {
                 if currPrice < prevPrice {
-                    // Buy price DOWN → notable
-                    data.insightText = String(format: "Buy floor dropped: %.1f→%.1f¢", prevPrice, currPrice)
+                    data.insightText = String(format: "Buy floor dropped: %.1f\u{2192}%.1f\u{00A2}", prevPrice, currPrice)
                     data.insightType = .repricing
                     break
                 }
@@ -176,10 +226,34 @@ func loadP2PSummaryData(api: PowstonAPI) -> P2PSummaryData? {
         }
     }
 
-    // Default insight if none detected
+    // Priority 2: Revenue spike (any day in window > 2x average)
     if data.insightText == nil && data.sellKwh > 0.001 {
-        let premiumPerKwh = data.premiumPerKwh
-        data.insightText = String(format: "P2P adds %.1f¢/kWh above spot", premiumPerKwh)
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "EEE"
+        dateFormatter.timeZone = powstonTimezone()
+
+        var dailyRevenues: [(Date, Double)] = []
+        var currentDate = rangeStart
+        while currentDate <= rangeEnd {
+            if let dayResult = store.calculateP2PPremium(siteId: siteId, date: currentDate) {
+                dailyRevenues.append((currentDate, dayResult.sellRevenue))
+            }
+            currentDate = calendar.date(byAdding: .day, value: 1, to: currentDate) ?? rangeEnd
+        }
+
+        if dailyRevenues.count >= 3 {
+            let avgRevenue = dailyRevenues.map(\.1).reduce(0, +) / Double(dailyRevenues.count)
+            if let best = dailyRevenues.max(by: { $0.1 < $1.1 }), avgRevenue > 0.01 && best.1 > avgRevenue * 2 {
+                let dayName = dateFormatter.string(from: best.0)
+                data.insightText = String(format: "Best day: $%.2f on %@", best.1, dayName)
+                data.insightType = .spike
+            }
+        }
+    }
+
+    // Priority 3: Default fallback
+    if data.insightText == nil && data.sellKwh > 0.001 {
+        data.insightText = String(format: "P2P adds %.1f\u{00A2}/kWh above spot", data.premiumPerKwh)
         data.insightType = .default
     }
 
@@ -234,7 +308,7 @@ struct P2PSummaryView: View {
             // Divider
             HStack {
                 VStack { Divider() }
-                Text("Contracts ↓")
+                Text("Contracts \u{2193}")
                     .font(.caption2)
                     .foregroundColor(.secondary)
                 VStack { Divider() }
@@ -272,6 +346,9 @@ struct P2PSummaryView: View {
                 Text(String(format: "$%.2f above spot", data.sellPremium))
                     .font(.title2.bold())
                     .foregroundColor(data.sellPremium >= 0 ? .green : .red)
+                if data.previousPremium != nil {
+                    trendArrow(data.premiumTrend)
+                }
                 Spacer()
                 Text(data.periodDescription)
                     .font(.caption)
@@ -298,7 +375,7 @@ struct P2PSummaryView: View {
                     Text("Premium")
                         .font(.caption2)
                         .foregroundColor(.secondary)
-                    Text(String(format: "%.1f¢/kWh", data.premiumPerKwh))
+                    Text(String(format: "%.1f\u{00A2}/kWh", data.premiumPerKwh))
                         .font(.subheadline.monospacedDigit())
                         .foregroundColor(data.premiumPerKwh >= 0 ? .green : .red)
                 }
@@ -336,6 +413,9 @@ struct P2PSummaryView: View {
                     Text(String(format: "$%.2f %@ spot", abs(buySavings), buySavings >= 0 ? "below" : "above"))
                         .font(.title2.bold())
                         .foregroundColor(buySavings >= 0 ? .green : .red)
+                    if data.previousPremium != nil {
+                        trendArrow(-data.premiumTrend)  // Inverted: lower cost is better for buy
+                    }
                 } else {
                     Text("No buy trades yet")
                         .font(.title2.bold())
@@ -383,6 +463,27 @@ struct P2PSummaryView: View {
         }
     }
 
+    // MARK: - Trend Arrow
+
+    private func trendArrow(_ delta: Double) -> some View {
+        Group {
+            if abs(delta) < 0.50 {
+                // Less than 50c change — flat
+                Image(systemName: "minus")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            } else if delta > 0 {
+                Image(systemName: "arrow.up")
+                    .font(.caption2.bold())
+                    .foregroundColor(.green)
+            } else {
+                Image(systemName: "arrow.down")
+                    .font(.caption2.bold())
+                    .foregroundColor(.red)
+            }
+        }
+    }
+
     // MARK: - Forward Position
 
     private func forwardPositionSection(_ data: P2PSummaryData) -> some View {
@@ -407,9 +508,14 @@ struct P2PSummaryView: View {
                 Spacer()
             }
 
+            // Value row (if any values exist)
+            if data.settledValue > 0.01 || data.upcomingValue > 0.01 || data.undeliveredValue > 0.01 {
+                valueRow(data)
+            }
+
             // Sparkline (if we have fill data)
             if !data.fillBuckets.isEmpty && data.fillBuckets.contains(where: { $0 > 0 }) {
-                fillSparkline(data.fillBuckets)
+                fillSparkline(data.fillBuckets, labels: data.fillBucketLabels)
             }
         }
     }
@@ -443,10 +549,46 @@ struct P2PSummaryView: View {
         }
     }
 
-    private func fillSparkline(_ buckets: [Double]) -> some View {
-        let labels = ["0-4w", "4-8w", "8-12w", "12-16w", "16-20w", "20w+"]
+    // MARK: - Value Row
+
+    private func valueRow(_ data: P2PSummaryData) -> some View {
+        HStack(spacing: 0) {
+            valueColumn(
+                label: "Settled",
+                value: data.settledValue,
+                color: .green
+            )
+            Spacer()
+            valueColumn(
+                label: "Upcoming",
+                value: data.upcomingValue,
+                color: .orange
+            )
+            Spacer()
+            valueColumn(
+                label: "Undelivered",
+                value: data.undeliveredValue,
+                color: Color(.systemGray3)
+            )
+        }
+    }
+
+    private func valueColumn(label: String, value: Double, color: Color) -> some View {
+        VStack(spacing: 2) {
+            Text(label)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            Text(String(format: "$%.0f", value))
+                .font(.subheadline.bold().monospacedDigit())
+                .foregroundColor(color)
+        }
+    }
+
+    // MARK: - Sparkline
+
+    private func fillSparkline(_ buckets: [Double], labels: [String]) -> some View {
         let chartData = buckets.enumerated().map { (index, value) in
-            (label: labels[min(index, labels.count - 1)], fill: value)
+            (label: index < labels.count ? labels[index] : "\(index)", fill: value)
         }
 
         return Chart {
@@ -472,7 +614,7 @@ struct P2PSummaryView: View {
             }
         }
         .chartXAxis {
-            AxisMarks { value in
+            AxisMarks { _ in
                 AxisValueLabel()
                     .font(.system(size: 8))
             }
