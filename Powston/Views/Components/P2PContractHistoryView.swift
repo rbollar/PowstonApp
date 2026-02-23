@@ -805,6 +805,9 @@ struct P2PContractHistoryView: View {
                 // Sync trade history first (needed for contract performance data)
                 try await lvService.syncWeek(siteId: siteId, force: true)
 
+                // Sync forward-contracted trades (QtyReport for future order dates)
+                try await lvService.syncForwardTrades(siteId: siteId)
+
                 let orders = try await lvService.fetchOrders(siteId: siteId, force: true)
                 await MainActor.run {
                     lvOrders = orders

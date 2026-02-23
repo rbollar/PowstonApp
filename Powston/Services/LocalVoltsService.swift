@@ -406,6 +406,52 @@ class LocalVoltsService: ObservableObject {
         _ = try await fetchTrades(siteId: siteId, from: weekAgo, to: today)
     }
 
+    /// Sync forward-contracted P2P trades out to the furthest active order.
+    /// QtyReport returns matched (contracted) volume for future dates, which is needed
+    /// for accurate fill tracking on forward orders. Fetches in chunks to avoid timeouts.
+    func syncForwardTrades(siteId: Int) async throws {
+        let activeOrders = dataStore.getActiveLVOrders(siteId: siteId)
+        guard !activeOrders.isEmpty else { return }
+
+        var calendar = Calendar.current
+        calendar.timeZone = TimeZone(identifier: "Australia/Brisbane") ?? .current
+        let today = calendar.startOfDay(for: Date())
+
+        // Find the furthest active order end date
+        let furthestEnd = activeOrders.map { $0.dateTo }.max() ?? today
+        let horizon = calendar.date(byAdding: .day, value: 1, to: furthestEnd) ?? furthestEnd
+
+        // Only fetch forward dates (today onward) — historical is handled by syncWeek
+        guard horizon > today else { return }
+
+        // Fetch in chunks to avoid QtyReport timeouts (60 days per chunk)
+        let chunkSize = 60
+        var chunkStart = calendar.date(byAdding: .day, value: 1, to: today) ?? today
+        var totalFetched = 0
+
+        while chunkStart < horizon {
+            let chunkEnd = min(
+                calendar.date(byAdding: .day, value: chunkSize, to: chunkStart) ?? horizon,
+                horizon
+            )
+
+            do {
+                let trades = try await fetchTrades(siteId: siteId, from: chunkStart, to: chunkEnd)
+                totalFetched += trades.count
+                print("📊 Forward sync chunk: \(trades.count) trades for \(chunkStart) to \(chunkEnd)")
+            } catch {
+                print("⚠️ Forward sync chunk failed: \(error.localizedDescription)")
+            }
+
+            chunkStart = calendar.date(byAdding: .day, value: chunkSize, to: chunkStart) ?? horizon
+            try? await Task.sleep(nanoseconds: 1_000_000_000)  // 1s between chunks
+        }
+
+        if totalFetched > 0 {
+            print("✅ Forward sync complete: \(totalFetched) trades across \(activeOrders.count) active orders")
+        }
+    }
+
     /// Force re-fetch all historical P2P trades (clears existing and re-fetches via QtyReport)
     /// Use when trade data has been lost/corrupted
     func refetchAllTrades(siteId: Int) async -> Int {
@@ -809,6 +855,12 @@ class LocalVoltsService: ObservableObject {
                 print("📊 Trade backfill from \(catchUpDate) to \(weekAhead)")
 
                 _ = try await fetchTrades(siteId: siteId, from: catchUpDate, to: weekAhead)
+            }
+
+            // Sync forward-contracted trades for active orders (QtyReport for future dates)
+            if needsTradesSync || needsOrdersSync {
+                print("📊 Daily sync: fetching forward-contracted trades...")
+                try await syncForwardTrades(siteId: siteId)
             }
 
             // Backfill settlement data if we have gaps or v5 cleared data

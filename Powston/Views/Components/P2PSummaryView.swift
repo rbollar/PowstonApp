@@ -118,7 +118,8 @@ func loadP2PSummaryData(api: PowstonAPI) -> P2PSummaryData? {
         var buckets: [[Double]] = Array(repeating: [], count: 6)
 
         for group in sellGroups {
-            let weeksOut = max(0, calendar.dateComponents([.weekOfYear], from: today, to: group.dateFrom).weekOfYear ?? 0)
+            let daysOut = max(0, calendar.dateComponents([.day], from: today, to: group.dateFrom).day ?? 0)
+            let weeksOut = daysOut / 7
             let bucketIndex = min(5, weeksOut / 4)
 
             if let perf = sellPerfs[group.id], perf.contract.totalVolumeKwh > 0 {
