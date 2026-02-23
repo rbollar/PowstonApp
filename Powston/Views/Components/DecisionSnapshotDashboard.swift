@@ -55,13 +55,12 @@ struct DecisionSnapshotDashboard: View {
                         flowPhase: flowPhase
                     )
                     
-                    // Price Pills
+                    // Price Cards
                     HStack(spacing: 12) {
-                        PricePillView(label: "Buy", cents: data.buyPrice ?? 0, isBuy: true)
-                        PricePillView(label: "Sell", cents: data.sellPrice ?? 0, isBuy: false)
-                        Spacer()
+                        LargePriceCardView(label: "Buy Price", cents: data.buyPrice ?? 0, isBuy: true)
+                        LargePriceCardView(label: "Sell Price", cents: data.sellPrice ?? 0, isBuy: false)
                     }
-                    
+
                     // Decision Explanation
                     SnapshotDecisionExplanation(
                         headline: explanation?.headline ?? decisionHeadline,
@@ -69,12 +68,6 @@ struct DecisionSnapshotDashboard: View {
                         fullReason: data.reason,
                         isAIEnhanced: explanation?.usedAI ?? false
                     )
-                    
-                    // Large Price Cards
-                    HStack(spacing: 12) {
-                        LargePriceCardView(label: "Buy Price", cents: data.buyPrice ?? 0, isBuy: true)
-                        LargePriceCardView(label: "Sell Price", cents: data.sellPrice ?? 0, isBuy: false)
-                    }
                 }
                 .padding(20)
                 .background(Color(.systemBackground))

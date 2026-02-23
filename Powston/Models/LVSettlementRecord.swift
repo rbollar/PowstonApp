@@ -289,15 +289,18 @@ extension Array where Element == LVSettlementRecord {
 
         // Import costs (purchases) — settle is spot, matchAmount is P2P (separate, additive)
         let spotCost = imports.reduce(0.0) { $0 + $1.settle + $1.matchAmount }
-        let networkEnergy = imports.reduce(0.0) { $0 + $1.networkEnergy }
-        let certificates = imports.reduce(0.0) { $0 + $1.certificateAmt }
+        // Network energy and certificates: portal combines import + export under "All Purchases"
+        // Export records carry network credits that significantly reduce net purchase costs
+        let networkEnergy = (imports + exports).reduce(0.0) { $0 + $1.networkEnergy }
+        let certificates = (imports + exports).reduce(0.0) { $0 + $1.certificateAmt }
         let lvFee = imports.reduce(0.0) { $0 + $1.localvoltsFee }
 
-        // Network access: dailyConnection is unreliable in QtyReport (inflated 5-27× at any resolution).
-        // Use raw value when reasonable, otherwise estimate from LV fee (which is always correct).
-        // Portal shows access=70.29c/day, LV fee=$1.10/day → ratio 0.6364 ex-GST.
-        let rawNetworkAccess = imports.reduce(0.0) { $0 + $1.dailyConnection + $1.standing + $1.meterCapital + $1.meterNonCapital }
-        let networkAccess = rawNetworkAccess <= lvFee ? rawNetworkAccess : lvFee * 0.6364
+        // Network access: use per-interval rate × basis for exact daily total.
+        // Summing 288 fractional values introduces rounding; multiplying one interval's rate by basis is exact.
+        // Portal excludes standing/metering (billed separately on invoice at 48.07c/day).
+        let basis = imports.first?.basis ?? 288
+        let perIntervalDC = imports.first(where: { $0.dailyConnection != 0 })?.dailyConnection ?? 0
+        let networkAccess = perIntervalDC * Double(basis)
 
         // Export revenue (sales)
         let spotRevenue = exports.reduce(0.0) { $0 + $1.settle }

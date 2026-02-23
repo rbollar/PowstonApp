@@ -245,68 +245,70 @@ struct RetailerComparisonView: View {
             return
         }
 
-        let dataStore = PowstonDataStore.shared
-        let cachedRecords = dataStore.getMeterRecordsLocal(siteId: siteId, from: startDate, to: yesterday)
-
-        guard !cachedRecords.isEmpty else { return }
-
-        var totalImportCost: Double = 0
-        var totalExportRevenue: Double = 0
-        var totalDailyCharges: Double = 0
-        var totalImportKwh: Double = 0
-        var totalExportKwh: Double = 0
-
-        for record in cachedRecords {
-            let importKwh = record.energyImport ?? record.generalKwh ?? 0
-            let exportKwh = record.energyExport ?? max(0, record.feedInKwh ?? 0)
-
-            totalImportKwh += importKwh
-            totalExportKwh += exportKwh
-
-            if let costs = record.costs {
-                totalImportCost += costs
-            }
-            if let earnings = record.earnings {
-                totalExportRevenue += earnings
-            }
-            if let fixed = record.fixedCosts {
-                totalDailyCharges += fixed
-            }
-        }
-
-        let importCostDollars = totalImportCost / 100.0
-        var exportRevenueDollars = totalExportRevenue / 100.0
-        let dailyChargesDollars = totalDailyCharges / 100.0
-
-        // P2P premium is NOT included in Powston API earnings — add it
-        if let p2pData = dataStore.calculateP2PPremiumForRangeDetailed(
-            siteId: siteId, from: startDate, to: yesterday) {
-            let p2pSellPremium = p2pData.sellRevenue - p2pData.sellSpotEquivalent
-            exportRevenueDollars += p2pSellPremium
-        }
-
-        let netCost = importCostDollars - exportRevenueDollars + dailyChargesDollars
-
-        let avgImportPrice = totalImportKwh > 0 ? totalImportCost / totalImportKwh : 0
-        let avgExportPrice = totalExportKwh > 0 ? totalExportRevenue / totalExportKwh : 0
-
-        let dates = cachedRecords.map { $0.intervalTime }
-        let minDate = dates.min() ?? startDate
-        let maxDate = dates.max() ?? yesterday
-        let days = max(1, calendar.dateComponents([.day], from: minDate, to: maxDate).day ?? 1)
-
         let formatter = DateFormatter()
         formatter.dateFormat = "d MMM yy"
         formatter.timeZone = powstonTimezone()
-        let periodDesc = "\(formatter.string(from: minDate)) - \(formatter.string(from: maxDate))"
+
+        // Try LV settlement data first (authoritative, correctly aggregated)
+        let lvSummaries = PowstonDataStore.shared.getLVCashflowSummaries(siteId: siteId, from: startDate, to: yesterday)
+        if !lvSummaries.isEmpty {
+            let agg = lvSummaries.aggregated()
+            let days = lvSummaries.count
+
+            let netCost = agg.netCosts  // positive = cost to user
+            let avgImportPrice = agg.energyPurchasedKwh > 0 ? (agg.totalPurchases / agg.energyPurchasedKwh) * 100 : 0
+            let avgExportPrice = agg.energySoldTotalKwh > 0 ? (agg.totalSales / agg.energySoldTotalKwh) * 100 : 0
+
+            // Parse date range from LV summaries
+            let dateParser = DateFormatter()
+            dateParser.dateFormat = "yyyy-MM-dd"
+            dateParser.timeZone = powstonTimezone()
+            let firstDate = dateParser.date(from: String(lvSummaries.first!.date.prefix(10))) ?? startDate
+            let lastDate = dateParser.date(from: String(lvSummaries.last!.date.prefix(10))) ?? yesterday
+            let periodDesc = "\(formatter.string(from: firstDate)) - \(formatter.string(from: lastDate))"
+
+            localVoltsSummary = LocalVoltsCostSummary(
+                importCost: agg.totalPurchases,
+                exportRevenue: agg.totalSales,
+                dailyCharges: agg.networkAccessCost + agg.localvoltsFee,
+                netCost: netCost,
+                importKwh: agg.energyPurchasedKwh,
+                exportKwh: agg.energySoldTotalKwh,
+                avgImportPrice: avgImportPrice,
+                avgExportPrice: avgExportPrice,
+                days: days,
+                periodDescription: periodDesc
+            )
+            return
+        }
+
+        // Fall back to Powston API summary (aggregated, handles multi-inverter correctly)
+        guard let summary = await api.fetchCustomRangeSummary(startDate: startDate, endDate: yesterday) else { return }
+
+        let sold = summary.earningsDollars
+        let bought = summary.rateCostsDollars
+        let supply = sold - bought - summary.netProfitDollars
+        var netCost = -summary.netProfitDollars  // positive = cost to user
+
+        // P2P premium is NOT included in Powston API earnings — add it
+        if let p2pData = PowstonDataStore.shared.calculateP2PPremiumForRangeDetailed(
+            siteId: siteId, from: startDate, to: yesterday) {
+            let p2pSellPremium = p2pData.sellRevenue - p2pData.sellSpotEquivalent
+            netCost -= p2pSellPremium
+        }
+
+        let avgImportPrice = summary.totalEnergyImported > 0 ? (bought / summary.totalEnergyImported) * 100 : 0
+        let avgExportPrice = summary.totalEnergyExported > 0 ? (sold / summary.totalEnergyExported) * 100 : 0
+        let days = max(1, calendar.dateComponents([.day], from: startDate, to: yesterday).day ?? 1)
+        let periodDesc = "\(formatter.string(from: startDate)) - \(formatter.string(from: yesterday))"
 
         localVoltsSummary = LocalVoltsCostSummary(
-            importCost: importCostDollars,
-            exportRevenue: exportRevenueDollars,
-            dailyCharges: dailyChargesDollars,
+            importCost: bought,
+            exportRevenue: sold,
+            dailyCharges: supply,
             netCost: netCost,
-            importKwh: totalImportKwh,
-            exportKwh: totalExportKwh,
+            importKwh: summary.totalEnergyImported,
+            exportKwh: summary.totalEnergyExported,
             avgImportPrice: avgImportPrice,
             avgExportPrice: avgExportPrice,
             days: days,

@@ -216,11 +216,20 @@ extension PowstonDataStore {
 
     /// Get LV cashflow summaries for a year, grouped by month
     /// Returns one LVCashflowSummary per month that has data
-    func getLVMonthlySummaries(siteId: Int, year: Int) -> [LVCashflowSummary] {
+    /// Optional maxDate caps the query to exclude unfinalized days
+    func getLVMonthlySummaries(siteId: Int, year: Int, maxDate: Date? = nil) -> [LVCashflowSummary] {
         guard let db = dbQueue else { return [] }
 
         let fromStr = String(format: "%04d-01-01", year)
-        let toStr = String(format: "%04d-12-31", year)
+        let toStr: String
+        if let maxDate = maxDate {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            formatter.timeZone = TimeZone(identifier: "Australia/Brisbane")
+            toStr = formatter.string(from: maxDate)
+        } else {
+            toStr = String(format: "%04d-12-31", year)
+        }
 
         return (try? db.read { db in
             // Get all daily records for the year, then group in Swift for flexibility

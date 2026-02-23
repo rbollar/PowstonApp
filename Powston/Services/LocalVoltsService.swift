@@ -759,15 +759,18 @@ class LocalVoltsService: ObservableObject {
     func performDailySyncIfNeeded(siteId: Int) async {
         guard hasCredentials else { return }
 
-        // v13 migration: revert v12 — settle and matchAmount ARE separate additive fields
-        // (confirmed from portal: Spot Energy + P2P Matched = All Sales)
+        // Settlement schema migrations — clear cached summaries to force re-fetch with corrected logic
+        // v14: include export network energy credits in cashflow calculation
+        // v15: (broken) recomputed from incomplete intervals table — reverted
+        // v16: clear and re-fetch to fix v15 damage
         let settlementVersion = UserDefaults.standard.integer(forKey: "lv_settlement_schema_version")
-        let needsRefresh = settlementVersion < 13
+        let needsRefresh = settlementVersion < 16
+
         if needsRefresh {
             dataStore.clearAllSettlementData(siteId: siteId)
             UserDefaults.standard.removeObject(forKey: "lv_earliest_settlement_date_\(siteId)")
-            UserDefaults.standard.set(13, forKey: "lv_settlement_schema_version")
-            print("📊 Settlement v13 migration: restore correct settle+matchAmount (additive, not subset)")
+            UserDefaults.standard.set(16, forKey: "lv_settlement_schema_version")
+            print("📊 Settlement v16 migration: cleared cashflow cache for clean re-fetch")
         }
 
         let needsOrdersSync = needsDailyOrdersSync(siteId: siteId)
@@ -956,10 +959,9 @@ class LocalVoltsService: ObservableObject {
         // Save per-interval records before aggregation
         dataStore.saveLVSettlementIntervals(filtered, siteId: currentSiteId)
 
-        // Group by date PREFIX (first 10 chars) — not full date string, because
-        // QtyReport may return different time components for same-day records
+        // Compute daily summaries from the callback's full record set.
+        // This preserves multi-NMI data that the intervals table PK may deduplicate.
         let byDate = Dictionary(grouping: filtered) { String($0.date.prefix(10)) }
-
         let summaries = byDate.values.map { $0.cashflowSummary() }
 
         // Save to database

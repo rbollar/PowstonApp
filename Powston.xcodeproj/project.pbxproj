@@ -100,6 +100,7 @@
 		39093FD616BEFCCE28F8E972 /* LVMarketAnalysis.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ED8E438C0680934240DB3A5 /* LVMarketAnalysis.swift */; };
 		3936DCEC7047E82A4D5B852F /* PeakAnalysisView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1A3A6DBAF147B6554AF7E31 /* PeakAnalysisView.swift */; };
 		39A78C493D73D7616BEC0268 /* PeerPowerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A78E7FE3A8AF5DACD657FDE4 /* PeerPowerView.swift */; };
+		C4E3F8A2B5D9016E7F2A4C8B /* P2PSummaryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3D2E7F1A4C8905D6E1F3B7A /* P2PSummaryView.swift */; };
 		3FCB6688336D362A5F30C72A /* PowstonAPI+MeterRecords.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AC06970A7DEB37D18EAD663 /* PowstonAPI+MeterRecords.swift */; };
 		406BC9F39B1F3101AC19E08A /* PowstonActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA6FDF7049646FCCDBF2BAD8 /* PowstonActivityAttributes.swift */; };
 		43397F280B33E8EACC00C884 /* TariffAnalysis.swift in Sources */ = {isa = PBXBuildFile; fileRef = C838465C24F9C32028530036 /* TariffAnalysis.swift */; };
@@ -385,6 +386,7 @@
 		9C34F23AE219E3ECA678D3B8 /* DaySummaryRecord.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DaySummaryRecord.swift; sourceTree = "<group>"; };
 		A45C5D8FCB5CB414795DAC2E /* LocalVoltsSocketClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LocalVoltsSocketClient.swift; sourceTree = "<group>"; };
 		A78E7FE3A8AF5DACD657FDE4 /* PeerPowerView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PeerPowerView.swift; sourceTree = "<group>"; };
+		B3D2E7F1A4C8905D6E1F3B7A /* P2PSummaryView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = P2PSummaryView.swift; sourceTree = "<group>"; };
 		A8964EF34970513CAA1FB3C3 /* CounterpartyType.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CounterpartyType.swift; sourceTree = "<group>"; };
 		AA1FF5D5729180AFB5A1AEFC /* AnalysisSyncProgressView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AnalysisSyncProgressView.swift; sourceTree = "<group>"; };
 		AABB1111222233334444AAAA /* LVContractSnapshot.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LVContractSnapshot.swift; sourceTree = "<group>"; };
@@ -773,6 +775,7 @@
 				BEE42230BB075AD4436C26DD /* P2PTradeImportView.swift */,
 				E1A3A6DBAF147B6554AF7E31 /* PeakAnalysisView.swift */,
 				A78E7FE3A8AF5DACD657FDE4 /* PeerPowerView.swift */,
+				B3D2E7F1A4C8905D6E1F3B7A /* P2PSummaryView.swift */,
 				1052E6A5FD0F16D8F435FF47 /* ProfitIntelligenceCard.swift */,
 				95C5628A369887F7F8ECCECE /* ProfitIntelligenceView.swift */,
 				7C0429C18C809DA7C8066148 /* SavingsBreakdownView.swift */,
@@ -1473,6 +1476,7 @@
 				B2529AD3B9F8E1A0BA0B6753 /* P2PTradeImportView.swift in Sources */,
 				3936DCEC7047E82A4D5B852F /* PeakAnalysisView.swift in Sources */,
 				39A78C493D73D7616BEC0268 /* PeerPowerView.swift in Sources */,
+				C4E3F8A2B5D9016E7F2A4C8B /* P2PSummaryView.swift in Sources */,
 				DCE9691DCBB4E234DD45847E /* ProfitIntelligenceCard.swift in Sources */,
 				5575A05FEA0AD81E0900F214 /* ProfitIntelligenceView.swift in Sources */,
 				630E982B4604ED05928E46D0 /* SavingsBreakdownView.swift in Sources */,

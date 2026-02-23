@@ -1159,8 +1159,12 @@ struct PeerPowerView: View {
     
     private var contractsTab: some View {
         ScrollView {
-            P2PContractHistoryView(directionFilter: viewMode == .selling ? .sell : .buy)
-                .padding()
+            VStack(spacing: 10) {
+                P2PSummaryView(directionFilter: viewMode == .selling ? .sell : .buy)
+
+                P2PContractHistoryView(directionFilter: viewMode == .selling ? .sell : .buy)
+            }
+            .padding()
         }
         .id("\(refreshTrigger)-\(viewMode)")  // Force refresh after import or direction change
     }
