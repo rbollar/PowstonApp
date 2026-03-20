@@ -30,7 +30,15 @@
       "WebSearch",
       "Bash(git --version)",
       "Bash(git config:*)",
-      "Bash(pgrep:*)"
+      "Bash(pgrep:*)",
+      "Bash(git status:*)",
+      "Bash(git commit:*)",
+      "Bash(__NEW_LINE_0ceb195ae124aff9__ echo \"=== Total offered/subscribed for sell snapshots \\(is_closed=0\\) ===\")",
+      "Bash(sqlite3:*)",
+      "Bash(pkill:*)",
+      "WebFetch(domain:discussions.apple.com)",
+      "Bash(cd:*)",
+      "Bash(plutil:*)"
     ]
   }
 }

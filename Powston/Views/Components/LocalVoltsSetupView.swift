@@ -271,7 +271,8 @@ struct LocalVoltsSetupView: View {
     }
 
     private func loadStoredCredentials() {
-        if let stored = LocalVoltsCredentialManager.shared.load() {
+        guard let siteId = api.selectedSite?.id else { return }
+        if let stored = LocalVoltsCredentialManager.shared.load(siteId: siteId) {
             username = stored.username
             hasStoredPassword = true
         }
@@ -283,7 +284,8 @@ struct LocalVoltsSetupView: View {
         // Use stored password if no new password entered
         let testPassword: String
         if password.isEmpty && hasStoredPassword {
-            guard let stored = LocalVoltsCredentialManager.shared.load() else {
+            guard let siteId = api.selectedSite?.id,
+                  let stored = LocalVoltsCredentialManager.shared.load(siteId: siteId) else {
                 testResult = .failure("Could not load stored password")
                 return
             }
@@ -319,18 +321,20 @@ struct LocalVoltsSetupView: View {
 
     private func saveCredentials() {
         guard !password.isEmpty else { return }
+        guard let siteId = api.selectedSite?.id else {
+            testResult = .failure("No site selected")
+            return
+        }
 
         do {
-            try lvService.saveCredentials(username: username, password: password)
+            try lvService.saveCredentials(username: username, password: password, siteId: siteId)
             hasStoredPassword = true
             password = ""  // Clear entered password
-            testResult = .success("Credentials saved")
+            testResult = .success("Credentials saved for this site")
 
             // Auto-sync today after saving
-            if let site = api.selectedSite {
-                Task {
-                    try? await lvService.syncToday(siteId: site.id)
-                }
+            Task {
+                try? await lvService.syncToday(siteId: siteId)
             }
         } catch {
             testResult = .failure("Failed to save: \(error.localizedDescription)")
@@ -357,9 +361,9 @@ extension LocalVoltsSetupView {
         LocalVoltsService.shared.statusBadge
     }
 
-    /// Check if credentials are configured
+    /// Check if credentials are configured for the current site
     static var hasCredentials: Bool {
-        LocalVoltsCredentialManager.shared.hasCredentials
+        LocalVoltsService.shared.hasCredentials
     }
 }
 

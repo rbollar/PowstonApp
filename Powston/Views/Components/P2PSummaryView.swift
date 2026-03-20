@@ -39,6 +39,16 @@ struct P2PSummaryData {
     var settledValue: Double = 0        // revenue from delivered trades
     var upcomingValue: Double = 0       // contracted, delivery window still open
     var undeliveredValue: Double = 0    // contracted, delivery window passed
+    var undeliveredKwh: Double = 0      // kWh that was offered but not filled
+    var elapsedOfferedKwh: Double = 0   // total kWh offered in elapsed days
+
+    // Fill rate trend (current vs previous window)
+    var currentFillRate: Double?        // current window fill rate (0-1)
+    var previousFillRate: Double?       // previous window fill rate (0-1)
+
+    // Weekly sell cap progress
+    var weeklySellCapKwh: Double?       // LV weekly export limit (nil = not set)
+    var weekSoldKwh: Double = 0         // kWh actually sold this week (spot + P2P)
 
     // Sparkline buckets (average fill% per 4-week bucket, trailing empties trimmed)
     var fillBuckets: [Double] = []
@@ -138,18 +148,60 @@ func loadP2PSummaryData(api: PowstonAPI) -> P2PSummaryData? {
         }
     }
 
-    // Value row — aggregate settled/upcoming/undelivered across all groups
-    let allGroups: [(LVOrderGroup, P2PContractPerformance?)] =
-        sellGroups.map { ($0, sellPerfs[$0.id]) } +
-        buyGroups.map { ($0, buyPerfs[$0.id]) }
+    // Value row — uses settlement data (authoritative) for settled & undelivered
+    // Settled: actual P2P revenue from lv_daily_cashflow for elapsed days
+    // Upcoming: pro-rated estimated revenue for future days
+    // Undelivered: offered value for elapsed days minus actual settled revenue
+    let allOrderGroups = sellGroups + buyGroups
+    for group in allOrderGroups {
+        guard let perf = sellPerfs[group.id] ?? buyPerfs[group.id] else { continue }
+        let contract = perf.contract
 
-    for (group, perf) in allGroups {
-        guard let perf = perf else { continue }
-        data.settledValue += perf.actualRevenue
-        if group.dateTo > today {
-            data.upcomingValue += perf.provisionalRevenue
-        } else {
-            data.undeliveredValue += perf.provisionalRevenue
+        let totalDays = max(1, (calendar.dateComponents([.day], from: group.dateFrom, to: group.dateTo).day ?? 0) + 1)
+        let elapsedEnd = min(group.dateTo, calendar.date(byAdding: .day, value: -1, to: today) ?? today)
+        let elapsedDays = max(0, (calendar.dateComponents([.day], from: group.dateFrom, to: elapsedEnd).day ?? 0) + 1)
+        let futureDays = max(0, totalDays - elapsedDays)
+
+        // Settled: sum actual P2P revenue & kWh from settlement data for elapsed days
+        var groupSettled: Double = 0
+        var groupSettledKwh: Double = 0
+        var checkDate = group.dateFrom
+        while checkDate <= elapsedEnd {
+            if let cf = store.getLVCashflowSummary(siteId: siteId, date: checkDate) {
+                groupSettled += cf.p2pMatchedRevenue
+                groupSettledKwh += cf.energySoldP2PKwh
+            }
+            checkDate = calendar.date(byAdding: .day, value: 1, to: checkDate) ?? elapsedEnd.addingTimeInterval(86400)
+        }
+
+        // If no settlement data, fall back to trade-level data
+        if groupSettled < 0.01 {
+            let trades = store.getLVIntervalTrades(siteId: siteId, from: group.dateFrom, to: elapsedEnd)
+            let dirMatch = contract.direction
+            for trade in trades where trade.direction.rawValue == dirMatch.rawValue {
+                groupSettled += trade.revenue
+                groupSettledKwh += trade.volumeKwh
+            }
+        }
+
+        data.settledValue += groupSettled
+
+        // Upcoming: pro-rated estimated revenue for future days
+        if futureDays > 0 {
+            let dailyEstimate = contract.estimatedRevenue / Double(totalDays)
+            data.upcomingValue += dailyEstimate * Double(futureDays)
+        }
+
+        // Undelivered: what was offered for elapsed days minus what was actually delivered
+        if elapsedDays > 0 {
+            let elapsedFraction = Double(elapsedDays) / Double(totalDays)
+            let elapsedEstimate = contract.estimatedRevenue * elapsedFraction
+            let elapsedOffered = contract.totalVolumeKwh * elapsedFraction
+            let undelivered = max(0, elapsedEstimate - groupSettled)
+            let undeliveredKwh = max(0, elapsedOffered - groupSettledKwh)
+            data.undeliveredValue += undelivered
+            data.undeliveredKwh += undeliveredKwh
+            data.elapsedOfferedKwh += elapsedOffered
         }
     }
 
@@ -172,7 +224,7 @@ func loadP2PSummaryData(api: PowstonAPI) -> P2PSummaryData? {
         }
 
         // Compute averages and trim trailing empty buckets
-        var averages = buckets.map { values in
+        let averages = buckets.map { values in
             values.isEmpty ? -1.0 : values.reduce(0, +) / Double(values.count)
         }
 
@@ -184,6 +236,73 @@ func loadP2PSummaryData(api: PowstonAPI) -> P2PSummaryData? {
             data.fillBuckets = trimmed.map { $0 < 0 ? 0 : $0 }
             data.fillBucketLabels = Array(allLabels.prefix(lastPopulated + 1))
         }
+    }
+
+    // Fill rate trend — compare latest vs second-latest snapshot for each active sell order
+    if data.sellOfferedKwh > 0 {
+        data.currentFillRate = data.sellSubscribedKwh / data.sellOfferedKwh
+
+        var latestTotal: Double = 0
+        var previousTotal: Double = 0
+        var hasComparison = false
+        for order in sellOrders {
+            let snapshots = store.getContractSnapshots(orderId: order.id)
+            guard snapshots.count >= 2 else { continue }
+            let curr = snapshots[snapshots.count - 1]
+            let prev = snapshots[snapshots.count - 2]
+            if curr.offeredVolumeKwh > 0 && prev.offeredVolumeKwh > 0 {
+                latestTotal += curr.subscribedVolumeKwh / curr.offeredVolumeKwh
+                previousTotal += prev.subscribedVolumeKwh / prev.offeredVolumeKwh
+                hasComparison = true
+            }
+        }
+        if hasComparison {
+            data.previousFillRate = previousTotal / Double(sellOrders.count)
+        }
+    }
+
+    // Weekly sell cap progress — same logic as analysis page:
+    // Priority: 1) UserDefaults budget, 2) Contract-derived limit
+    let lvBudgetKey = "lv_export_budget_kwh_\(siteId)"
+    var weeklyCap: Double?
+    if let userBudget = UserDefaults.standard.object(forKey: lvBudgetKey) as? Double, userBudget > 0 {
+        weeklyCap = userBudget
+    } else {
+        // Fall back to contract-derived limit (same as analysis page)
+        let sellContracts = store.getP2PContracts(siteId: siteId).filter { $0.direction == .sell }
+        let upcomingContract = sellContracts
+            .filter { calendar.startOfDay(for: $0.startDate) > today }
+            .sorted { $0.startDate < $1.startDate }
+            .first
+        let mostRecentContract = sellContracts
+            .sorted { $0.createdAt > $1.createdAt }
+            .first
+        if let upcoming = upcomingContract {
+            weeklyCap = upcoming.totalVolumeKwh
+        } else if let recent = mostRecentContract {
+            weeklyCap = recent.totalVolumeKwh
+        }
+    }
+
+    if let cap = weeklyCap, cap > 0 {
+        data.weeklySellCapKwh = cap
+
+        // Find start of current week (Monday)
+        var weekStart = today
+        while calendar.component(.weekday, from: weekStart) != 2 { // Monday = 2
+            weekStart = calendar.date(byAdding: .day, value: -1, to: weekStart)!
+        }
+
+        // Sum exported kWh from settlement data for this week
+        var weekExported: Double = 0
+        var checkDate = weekStart
+        while checkDate < today {
+            if let cf = store.getLVCashflowSummary(siteId: siteId, date: checkDate) {
+                weekExported += cf.energySoldSpotKwh + cf.energySoldP2PKwh
+            }
+            checkDate = calendar.date(byAdding: .day, value: 1, to: checkDate)!
+        }
+        data.weekSoldKwh = weekExported
     }
 
     // Insight detection — priority ordered
@@ -414,7 +533,7 @@ struct P2PSummaryView: View {
                         .font(.title2.bold())
                         .foregroundColor(buySavings >= 0 ? .green : .red)
                     if data.previousPremium != nil {
-                        trendArrow(-data.premiumTrend)  // Inverted: lower cost is better for buy
+                        trendArrow(-data.premiumTrend, invertColors: true)  // Inverted: lower cost is better for buy
                     }
                 } else {
                     Text("No buy trades yet")
@@ -465,8 +584,10 @@ struct P2PSummaryView: View {
 
     // MARK: - Trend Arrow
 
-    private func trendArrow(_ delta: Double) -> some View {
-        Group {
+    private func trendArrow(_ delta: Double, invertColors: Bool = false) -> some View {
+        let upColor: Color = invertColors ? .red : .green
+        let downColor: Color = invertColors ? .green : .red
+        return Group {
             if abs(delta) < 0.50 {
                 // Less than 50c change — flat
                 Image(systemName: "minus")
@@ -475,11 +596,33 @@ struct P2PSummaryView: View {
             } else if delta > 0 {
                 Image(systemName: "arrow.up")
                     .font(.caption2.bold())
-                    .foregroundColor(.green)
+                    .foregroundColor(upColor)
             } else {
                 Image(systemName: "arrow.down")
                     .font(.caption2.bold())
-                    .foregroundColor(.red)
+                    .foregroundColor(downColor)
+            }
+        }
+    }
+
+    /// Fill rate trend arrow — uses percentage point delta (0-1 scale)
+    private func fillRateTrendArrow(_ current: Double?, _ previous: Double?) -> some View {
+        Group {
+            if let curr = current, let prev = previous {
+                let delta = curr - prev
+                if abs(delta) < 0.02 {
+                    Image(systemName: "minus")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                } else if delta > 0 {
+                    Image(systemName: "arrow.up")
+                        .font(.caption2.bold())
+                        .foregroundColor(.green)
+                } else {
+                    Image(systemName: "arrow.down")
+                        .font(.caption2.bold())
+                        .foregroundColor(.red)
+                }
             }
         }
     }
@@ -506,6 +649,26 @@ struct P2PSummaryView: View {
                     )
                 }
                 Spacer()
+
+                // Fill rate with trend arrow
+                if let fillRate = data.currentFillRate {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        HStack(spacing: 3) {
+                            Text(String(format: "%.0f%%", fillRate * 100))
+                                .font(.subheadline.bold().monospacedDigit())
+                                .foregroundColor(.primary)
+                            fillRateTrendArrow(data.currentFillRate, data.previousFillRate)
+                        }
+                        Text("Fill rate")
+                            .font(.caption2)
+                            .foregroundColor(.primary.opacity(0.7))
+                    }
+                }
+            }
+
+            // Weekly sell cap progress
+            if let cap = data.weeklySellCapKwh, cap > 0 {
+                weeklyCapRow(sold: data.weekSoldKwh, cap: cap)
             }
 
             // Value row (if any values exist)
@@ -549,27 +712,71 @@ struct P2PSummaryView: View {
         }
     }
 
+    // MARK: - Weekly Cap Row
+
+    private func weeklyCapRow(sold: Double, cap: Double) -> some View {
+        let pct = min(1.0, sold / cap)
+        let barColor: Color = pct > 0.9 ? .red : pct > 0.7 ? .orange : .green
+        return VStack(spacing: 4) {
+            HStack {
+                Text("LV Limit")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text(String(format: "%.0f / %.0f kWh (%.0f%%)", sold, cap, pct * 100))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundColor(.primary.opacity(0.7))
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.gray.opacity(0.2))
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(barColor)
+                        .frame(width: geo.size.width * pct)
+                }
+            }
+            .frame(height: 4)
+        }
+    }
+
     // MARK: - Value Row
 
     private func valueRow(_ data: P2PSummaryData) -> some View {
-        HStack(spacing: 0) {
-            valueColumn(
-                label: "Settled",
-                value: data.settledValue,
-                color: .green
-            )
-            Spacer()
-            valueColumn(
-                label: "Upcoming",
-                value: data.upcomingValue,
-                color: .orange
-            )
-            Spacer()
-            valueColumn(
-                label: "Undelivered",
-                value: data.undeliveredValue,
-                color: Color(.systemGray3)
-            )
+        VStack(spacing: 6) {
+            HStack(spacing: 0) {
+                valueColumn(
+                    label: "Settled",
+                    value: data.settledValue,
+                    color: .green
+                )
+                Spacer()
+                valueColumn(
+                    label: "Upcoming",
+                    value: data.upcomingValue,
+                    color: .orange
+                )
+                Spacer()
+                valueColumn(
+                    label: "Undelivered",
+                    value: data.undeliveredValue,
+                    color: .primary.opacity(0.6)
+                )
+            }
+
+            // Undelivered detail line
+            if data.undeliveredKwh > 0.1 {
+                let pct = data.elapsedOfferedKwh > 0
+                    ? (data.undeliveredKwh / data.elapsedOfferedKwh) * 100
+                    : 0
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.caption2)
+                    Text(String(format: "$%.2f / %.1f kWh undelivered (%.0f%% of offered)", data.undeliveredValue, data.undeliveredKwh, pct))
+                        .font(.caption2)
+                }
+                .foregroundColor(.primary.opacity(0.6))
+            }
         }
     }
 

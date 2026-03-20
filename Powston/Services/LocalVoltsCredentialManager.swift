@@ -3,6 +3,7 @@
 //  Powston
 //
 //  Keychain wrapper for secure LocalVolts credential storage
+//  Credentials are stored per-site using siteId in keychain keys
 //  Uses kSecAttrAccessibleAfterFirstUnlock for background access
 //
 
@@ -13,8 +14,6 @@ class LocalVoltsCredentialManager {
     static let shared = LocalVoltsCredentialManager()
 
     private let service = "com.bollar.powston.localvolts"
-    private let usernameKey = "username"
-    private let passwordKey = "password"
 
     struct Credentials {
         let username: String
@@ -23,34 +22,58 @@ class LocalVoltsCredentialManager {
 
     private init() {}
 
-    // MARK: - Public API
+    // MARK: - Per-Site Public API
 
-    var hasCredentials: Bool {
-        load() != nil
+    func hasCredentials(siteId: Int) -> Bool {
+        load(siteId: siteId) != nil
     }
 
-    func save(username: String, password: String) throws {
-        // Delete existing credentials first
-        try? delete()
-
-        // Save username
-        try saveItem(key: usernameKey, value: username)
-
-        // Save password
-        try saveItem(key: passwordKey, value: password)
+    func save(username: String, password: String, siteId: Int) throws {
+        try? delete(siteId: siteId)
+        try saveItem(key: "username_\(siteId)", value: username)
+        try saveItem(key: "password_\(siteId)", value: password)
     }
 
-    func load() -> Credentials? {
-        guard let username = loadItem(key: usernameKey),
-              let password = loadItem(key: passwordKey) else {
+    func load(siteId: Int) -> Credentials? {
+        // Try per-site credentials first
+        if let username = loadItem(key: "username_\(siteId)"),
+           let password = loadItem(key: "password_\(siteId)") {
+            return Credentials(username: username, password: password)
+        }
+        // Fall back to legacy global credentials for migration
+        return loadLegacy()
+    }
+
+    func delete(siteId: Int) throws {
+        try deleteItem(key: "username_\(siteId)")
+        try deleteItem(key: "password_\(siteId)")
+    }
+
+    // MARK: - Legacy Migration
+
+    /// Load from old global keys (no siteId suffix)
+    private func loadLegacy() -> Credentials? {
+        guard let username = loadItem(key: "username"),
+              let password = loadItem(key: "password") else {
             return nil
         }
         return Credentials(username: username, password: password)
     }
 
-    func delete() throws {
-        try deleteItem(key: usernameKey)
-        try deleteItem(key: passwordKey)
+    /// Migrate legacy global credentials to a specific site
+    func migrateLegacyCredentials(toSiteId siteId: Int) {
+        guard let legacy = loadLegacy() else { return }
+        // Only migrate if the site doesn't already have per-site credentials
+        if loadItem(key: "username_\(siteId)") == nil {
+            try? save(username: legacy.username, password: legacy.password, siteId: siteId)
+            print("🔑 Migrated legacy LV credentials to site \(siteId)")
+        }
+    }
+
+    /// Delete legacy global credentials after migration
+    func deleteLegacyCredentials() {
+        try? deleteItem(key: "username")
+        try? deleteItem(key: "password")
     }
 
     // MARK: - Private Keychain Operations

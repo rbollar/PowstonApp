@@ -298,9 +298,12 @@ extension Array where Element == LVSettlementRecord {
         // Network access: use per-interval rate × basis for exact daily total.
         // Summing 288 fractional values introduces rounding; multiplying one interval's rate by basis is exact.
         // Portal excludes standing/metering (billed separately on invoice at 48.07c/day).
+        // Cap at lvFee × 0.6364: dailyConnection field is known to be inflated (5-27×).
+        // The cap matches the portal's Network Access value (e.g. $0.70 = $1.10 × 0.6364).
         let basis = imports.first?.basis ?? 288
         let perIntervalDC = imports.first(where: { $0.dailyConnection != 0 })?.dailyConnection ?? 0
-        let networkAccess = perIntervalDC * Double(basis)
+        let rawNetworkAccess = perIntervalDC * Double(basis)
+        let networkAccess = lvFee > 0 ? Swift.min(rawNetworkAccess, lvFee * 0.6364) : rawNetworkAccess
 
         // Export revenue (sales)
         let spotRevenue = exports.reduce(0.0) { $0 + $1.settle }

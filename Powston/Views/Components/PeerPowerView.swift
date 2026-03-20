@@ -3425,7 +3425,7 @@ struct PeerPowerView: View {
             VStack(spacing: 4) {
                 HStack {
                     Text("Hour")
-                        .frame(width: 50, alignment: .leading)
+                        .frame(width: 60, alignment: .leading)
                     Text("kWh/day")
                         .frame(width: 60, alignment: .trailing)
                     Text("Win-Win")
@@ -3450,7 +3450,8 @@ struct PeerPowerView: View {
                                     .foregroundColor(.yellow)
                             }
                         }
-                        .frame(width: 50, alignment: .leading)
+                        .lineLimit(1)
+                        .frame(width: 60, alignment: .leading)
 
                         Text(String(format: "%.1f", hourData.dailyKwh))
                             .frame(width: 60, alignment: .trailing)
@@ -3847,14 +3848,15 @@ struct P2PConsistencyTracker: View {
         return min(1.0, dailyExportableKwh / dailyTargetKwh)
     }
 
-    /// Aggregate fill rate from all tiers that have historical data
+    /// Aggregate fill rate from all tiers that have historical data (returns 0-1 ratio)
     private var historicalFillRate: Double? {
         let tiersWithData = tiered.tiers.filter { $0.historicalFillRate != nil }
         guard !tiersWithData.isEmpty else { return nil }
         let totalVol = tiersWithData.reduce(0.0) { $0 + $1.historicalVolumeKwh }
         guard totalVol > 0 else { return nil }
-        // Volume-weighted fill rate
-        return tiersWithData.reduce(0.0) { $0 + ($1.historicalFillRate ?? 0) * $1.historicalVolumeKwh } / totalVol
+        // Volume-weighted fill rate; tier values are 0-100 percentage, convert to 0-1 ratio
+        let weightedPct = tiersWithData.reduce(0.0) { $0 + ($1.historicalFillRate ?? 0) * $1.historicalVolumeKwh } / totalVol
+        return weightedPct / 100.0
     }
 
     private var rampUpDaysEstimate: Int {

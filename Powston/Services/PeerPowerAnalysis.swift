@@ -1750,15 +1750,14 @@ class PeerPowerAnalysis: ObservableObject {
             maxWeeklyKwh = min(maxDailyExportKwh * 7, dailyAvgExportKwh * 7)
         }
 
-        // Build price -> performance map from historical contracts
+        // Build price -> performance map from P2PContract records (if any)
         var historicalPerformance: [Int: HistoricalTierPerformance] = [:]
 
-        for contract in completedContracts {
+        for contract in allContracts {
             let perf = dataStore.getP2PContractPerformance(contract)
 
             for tierPerf in perf.tierPerformance {
                 let priceKey = Int(tierPerf.tier.priceCents)
-                // Skip outlier prices in historical data too
                 guard Double(priceKey) >= minViablePrice else { continue }
 
                 let existing = historicalPerformance[priceKey]
@@ -1769,6 +1768,30 @@ class PeerPowerAnalysis: ObservableObject {
                     totalFilledKwh: (existing?.totalFilledKwh ?? 0) + tierPerf.matchedKwh,
                     contractCount: (existing?.contractCount ?? 0) + 1
                 )
+            }
+        }
+
+        // Fallback: if no P2PContract records, build from LV order groups (actual API orders)
+        if historicalPerformance.isEmpty {
+            let sellOrders = dataStore.getActiveLVOrders(siteId: config.siteId, direction: "Sell")
+            let sellGroups = LVOrder.groupByContract(sellOrders)
+            let sellPerfs = dataStore.getLVOrderGroupPerformances(sellGroups)
+
+            for (_, perf) in zip(sellGroups, sellGroups.map({ sellPerfs[$0.id] })) {
+                guard let perf = perf else { continue }
+                for tierPerf in perf.tierPerformance {
+                    let priceKey = Int(tierPerf.tier.priceCents)
+                    guard Double(priceKey) >= minViablePrice else { continue }
+
+                    let existing = historicalPerformance[priceKey]
+
+                    historicalPerformance[priceKey] = HistoricalTierPerformance(
+                        priceCents: tierPerf.tier.priceCents,
+                        totalOfferedKwh: (existing?.totalOfferedKwh ?? 0) + tierPerf.tier.volumeKwh,
+                        totalFilledKwh: (existing?.totalFilledKwh ?? 0) + tierPerf.matchedKwh,
+                        contractCount: (existing?.contractCount ?? 0) + 1
+                    )
+                }
             }
         }
 

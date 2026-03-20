@@ -4,6 +4,7 @@
 //
 
 import UIKit
+import SwiftUI
 import Combine
 import UserNotifications
 
@@ -134,41 +135,111 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 // MARK: - Orientation Manager
 class OrientationManager: ObservableObject {
     static let shared = OrientationManager()
-    
+
     @Published var isLandscapeAllowed = false
-    
+
     // Track how many views want landscape (to handle tab switching)
     private var landscapeRequestCount = 0
     private var lockTask: Task<Void, Never>?
-    
+
     func allowLandscape() {
         // Cancel any pending lock
         lockTask?.cancel()
         lockTask = nil
-        
+
         landscapeRequestCount += 1
         isLandscapeAllowed = true
         AppDelegate.orientationLock = .allButUpsideDown
+        notifyOrientationChange()
     }
-    
+
     func lockToPortrait() {
         landscapeRequestCount = max(0, landscapeRequestCount - 1)
-        
+
         // Only lock if no views want landscape anymore
         // Use a small delay to allow tab switching to call allowLandscape first
         lockTask?.cancel()
         lockTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 second delay
-            
+
             // Check if another view has requested landscape in the meantime
             guard !Task.isCancelled && self.landscapeRequestCount == 0 else { return }
-            
+
             self.isLandscapeAllowed = false
             AppDelegate.orientationLock = .portrait
-            
+            notifyOrientationChange()
+
             // Force rotation back to portrait if currently in landscape
             if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
                 windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+            }
+        }
+    }
+
+    /// Notify the system that supported orientations have changed (required since iOS 16+)
+    private func notifyOrientationChange() {
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
+        for window in windowScene.windows {
+            // Notify entire view controller hierarchy
+            notifyAllControllers(window.rootViewController)
+        }
+    }
+
+    private func notifyAllControllers(_ vc: UIViewController?) {
+        guard let vc = vc else { return }
+        vc.setNeedsUpdateOfSupportedInterfaceOrientations()
+        for child in vc.children {
+            notifyAllControllers(child)
+        }
+        if let presented = vc.presentedViewController {
+            notifyAllControllers(presented)
+        }
+    }
+}
+
+// MARK: - Landscape Container View
+/// Full-screen container that forces landscape orientation for its content.
+/// Use with .fullScreenCover to present landscape-only views (e.g. charts, tables).
+struct LandscapeContainerView<Content: View>: View {
+    @Environment(\.dismiss) private var dismiss
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        NavigationStack {
+            content
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(action: { dismiss() }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "xmark")
+                                Text("Done")
+                            }
+                        }
+                    }
+                }
+        }
+        .onAppear {
+            // Force landscape when presented
+            AppDelegate.orientationLock = .landscape
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
+                windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscape))
+                for window in windowScene.windows {
+                    window.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+                }
+            }
+        }
+        .onDisappear {
+            // Restore portrait when dismissed
+            AppDelegate.orientationLock = .portrait
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
+                windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+                for window in windowScene.windows {
+                    window.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+                }
             }
         }
     }

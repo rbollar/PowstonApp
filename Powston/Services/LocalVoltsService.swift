@@ -140,19 +140,26 @@ class LocalVoltsService: ObservableObject {
 
     // MARK: - Public API
 
-    /// Check if credentials are configured
+    /// Check if credentials are configured for the current site
     var hasCredentials: Bool {
-        credentialManager.hasCredentials
+        guard currentSiteId > 0 else { return false }
+        return credentialManager.hasCredentials(siteId: currentSiteId)
     }
 
-    /// Get stored username (for display)
+    /// Check if credentials are configured for a specific site
+    func hasCredentials(forSiteId siteId: Int) -> Bool {
+        credentialManager.hasCredentials(siteId: siteId)
+    }
+
+    /// Get stored username for current site (for display)
     var storedUsername: String? {
-        credentialManager.load()?.username
+        guard currentSiteId > 0 else { return nil }
+        return credentialManager.load(siteId: currentSiteId)?.username
     }
 
     /// Connect to LocalVolts with stored credentials
     func connect(siteId: Int) async throws {
-        guard let credentials = credentialManager.load() else {
+        guard let credentials = credentialManager.load(siteId: siteId) else {
             throw ServiceError.noCredentials
         }
 
@@ -244,14 +251,21 @@ class LocalVoltsService: ObservableObject {
         return token.strUsername
     }
 
-    /// Save credentials after successful test
+    /// Save credentials for the current site after successful test
     func saveCredentials(username: String, password: String) throws {
-        try credentialManager.save(username: username, password: password)
+        guard currentSiteId > 0 else { throw ServiceError.noCredentials }
+        try credentialManager.save(username: username, password: password, siteId: currentSiteId)
     }
 
-    /// Delete stored credentials
+    /// Save credentials for a specific site
+    func saveCredentials(username: String, password: String, siteId: Int) throws {
+        try credentialManager.save(username: username, password: password, siteId: siteId)
+    }
+
+    /// Delete stored credentials for the current site
     func deleteCredentials() throws {
-        try credentialManager.delete()
+        guard currentSiteId > 0 else { return }
+        try credentialManager.delete(siteId: currentSiteId)
         disconnect()
         authToken = nil
     }
@@ -455,7 +469,7 @@ class LocalVoltsService: ObservableObject {
     /// Force re-fetch all historical P2P trades (clears existing and re-fetches via QtyReport)
     /// Use when trade data has been lost/corrupted
     func refetchAllTrades(siteId: Int) async -> Int {
-        guard hasCredentials else { return 0 }
+        guard hasCredentials(forSiteId: siteId) else { return 0 }
 
         var calendar = Calendar.current
         calendar.timeZone = TimeZone(identifier: "Australia/Brisbane") ?? .current
@@ -771,7 +785,7 @@ class LocalVoltsService: ObservableObject {
     /// Check if a daily orders sync is needed (>24 hours since last sync)
     /// Returns true if we have credentials and haven't synced in over 24 hours
     func needsDailyOrdersSync(siteId: Int) -> Bool {
-        guard hasCredentials else { return false }
+        guard hasCredentials(forSiteId: siteId) else { return false }
 
         guard let lastSync = dataStore.getLastLVOrdersSyncTime(siteId: siteId) else {
             // Never synced orders - check if we have any contracts
@@ -787,7 +801,7 @@ class LocalVoltsService: ObservableObject {
     /// Check if a daily trades sync is needed (>24 hours since last sync)
     /// Returns true if we have credentials and haven't synced in over 24 hours
     func needsDailyTradesSync(siteId: Int) -> Bool {
-        guard hasCredentials else { return false }
+        guard hasCredentials(forSiteId: siteId) else { return false }
 
         guard let lastSync = dataStore.getLastLVSyncTime(siteId: siteId) else {
             // Never synced trades - check if we have any
@@ -803,7 +817,7 @@ class LocalVoltsService: ObservableObject {
     /// Call this periodically (e.g., when Powston API refreshes data)
     /// Syncs trades (today + 7 days forecast) and orders if stale
     func performDailySyncIfNeeded(siteId: Int) async {
-        guard hasCredentials else { return }
+        guard hasCredentials(forSiteId: siteId) else { return }
 
         // Settlement schema migrations — clear cached summaries to force re-fetch with corrected logic
         // v14: include export network energy credits in cashflow calculation
@@ -908,6 +922,10 @@ class LocalVoltsService: ObservableObject {
         // Check which dates we already have
         let existingDates = dataStore.getSettlementDates(siteId: siteId)
 
+        // Recent days (last 3 days) are always re-fetched because settlement data
+        // may arrive incomplete on first fetch and fill in over subsequent hours
+        let recentCutoff = calendar.date(byAdding: .day, value: -3, to: today) ?? today
+
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         formatter.timeZone = TimeZone(identifier: "Australia/Brisbane")
@@ -916,7 +934,8 @@ class LocalVoltsService: ObservableObject {
         var checkDate = effectiveFrom
         while checkDate <= effectiveTo {
             let dateStr = formatter.string(from: checkDate)
-            if !existingDates.contains(dateStr) {
+            let isRecent = checkDate >= recentCutoff
+            if isRecent || !existingDates.contains(dateStr) {
                 missingDates.append(checkDate)
             }
             checkDate = calendar.date(byAdding: .day, value: 1, to: checkDate) ?? effectiveTo
@@ -1008,16 +1027,25 @@ class LocalVoltsService: ObservableObject {
 
         guard !filtered.isEmpty else { return }
 
-        // Save per-interval records before aggregation
+        // Save per-interval records before aggregation (upserts accumulate across batches)
         dataStore.saveLVSettlementIntervals(filtered, siteId: currentSiteId)
 
-        // Compute daily summaries from the callback's full record set.
-        // This preserves multi-NMI data that the intervals table PK may deduplicate.
-        let byDate = Dictionary(grouping: filtered) { String($0.date.prefix(10)) }
-        let summaries = byDate.values.map { $0.cashflowSummary() }
+        // Recompute daily summaries from ALL accumulated intervals in the table,
+        // not just this batch. Previous approach computed from the batch only, causing
+        // stale/partial cashflow when data arrives in multiple Identity responses.
+        let affectedDates = Set(filtered.map { String($0.date.prefix(10)) })
+        var summaries: [LVCashflowSummary] = []
+        for dateStr in affectedDates {
+            let allIntervals = dataStore.getSettlementIntervals(siteId: currentSiteId, date: dateStr)
+            if !allIntervals.isEmpty {
+                summaries.append(allIntervals.cashflowSummary())
+            }
+        }
 
         // Save to database
-        dataStore.saveLVCashflowSummaries(summaries, siteId: currentSiteId)
+        if !summaries.isEmpty {
+            dataStore.saveLVCashflowSummaries(summaries, siteId: currentSiteId)
+        }
         receivedSettlementCount += filtered.count
     }
 

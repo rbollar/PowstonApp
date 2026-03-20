@@ -133,6 +133,55 @@ struct HistoryView: View {
         }.sorted { $0.date < $1.date }
     }
     
+    /// Fill gaps in daily summaries with LV settlement data
+    /// When Powston data covers only part of the date range, days before data started
+    /// (or any missing days) can be filled from LV cashflow if available.
+    /// LV settlement data already includes P2P — do NOT pass these through adjustDailySummariesForP2P.
+    private func fillGapsWithLVSettlement(_ summaries: [DailySummary], siteId: Int, from: Date, to: Date) -> [DailySummary] {
+        guard LocalVoltsService.shared.hasCredentials else { return summaries }
+
+        var cal = Calendar.current
+        cal.timeZone = powstonTimezone()
+
+        // Build set of dates that already have summaries
+        let existingDates = Set(summaries.map { cal.startOfDay(for: $0.date) })
+
+        // Find missing dates in range
+        var missingDates: [Date] = []
+        var checkDate = cal.startOfDay(for: from)
+        let endDate = cal.startOfDay(for: to)
+        while checkDate <= endDate {
+            if !existingDates.contains(checkDate) {
+                missingDates.append(checkDate)
+            }
+            checkDate = cal.date(byAdding: .day, value: 1, to: checkDate)!
+        }
+
+        guard !missingDates.isEmpty else { return summaries }
+
+        // Get LV cashflow for the full range (already cached from earlier fetchOnDemand)
+        let lvSummaries = PowstonDataStore.shared.getLVCashflowSummaries(siteId: siteId, from: from, to: to)
+        guard !lvSummaries.isEmpty else { return summaries }
+
+        let lvByDate: [String: LVCashflowSummary] = Dictionary(
+            uniqueKeysWithValues: lvSummaries.map { (String($0.date.prefix(10)), $0) }
+        )
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.timeZone = powstonTimezone()
+
+        var merged = summaries
+        for date in missingDates {
+            let dateStr = dateFormatter.string(from: date)
+            if let lv = lvByDate[dateStr], let daily = lv.toDailySummary() {
+                merged.append(daily)
+            }
+        }
+
+        return merged.sorted { $0.date < $1.date }
+    }
+
     /// Adjust daily summaries with per-day P2P premium for charts
     /// P2P premium is NOT included in Powston API earnings — add it per day
     private func adjustDailySummariesForP2P(_ summaries: [DailySummary], siteId: Int) -> [DailySummary] {
@@ -335,8 +384,9 @@ struct HistoryView: View {
     var isCurrentWeek: Bool { calendar.isDate(weekStart, inSameDayAs: currentWeekStart) }
 
     /// The latest date we can navigate to (based on data availability)
+    /// Defaults to day-before-yesterday until refreshLatestCompleteDataDate() confirms yesterday is finalized
     var latestNavigableDate: Date {
-        api.latestCompleteDataDate ?? calendar.date(byAdding: .day, value: -1, to: Date()) ?? Date()
+        api.latestCompleteDataDate ?? calendar.date(byAdding: .day, value: -2, to: Date()) ?? Date()
     }
 
     /// Check if selected date is at or past the latest available data
@@ -347,26 +397,33 @@ struct HistoryView: View {
     }
 
     var canAdvance: Bool {
+        let latestDay = calendar.startOfDay(for: latestNavigableDate)
         switch viewMode {
         case .day:
             // Can only advance if we haven't reached the latest complete data date
             let selectedDay = calendar.startOfDay(for: selectedDate)
-            let latestDay = calendar.startOfDay(for: latestNavigableDate)
             return selectedDay < latestDay
-        case .week: return !isCurrentWeek
-        case .month: return !isCurrentMonth
+        case .week:
+            // Can advance if the next week's start is <= latestNavigableDate
+            guard let nextWeekStart = calendar.date(byAdding: .day, value: 7, to: weekStart) else { return false }
+            return nextWeekStart <= latestDay && !isCurrentWeek
+        case .month:
+            // Can advance if the next month contains any finalized days
+            guard let nextMonthStart = calendar.date(byAdding: .month, value: 1, to: monthStart) else { return false }
+            return nextMonthStart <= latestDay && !isCurrentMonth
         case .year: return !isCurrentYear
         case .custom:
-            let latestDay = calendar.startOfDay(for: latestNavigableDate)
             return customEndDate < latestDay
         }
     }
     
     var jumpButtonTitle: String {
         switch viewMode {
-        case .day: return "Yesterday"
-        case .week: return "Last Week"
-        case .month: return "This Month"
+        case .day:
+            if calendar.isDateInToday(latestNavigableDate) { return "Today" }
+            return calendar.isDateInYesterday(latestNavigableDate) ? "Yesterday" : "Latest"
+        case .week: return "Latest"
+        case .month: return "Latest"
         case .year: return "This Year"
         case .custom: return "Latest"
         }
@@ -377,8 +434,14 @@ struct HistoryView: View {
         case .day:
             // At latest if we're on the latest complete data date
             return calendar.isDate(selectedDate, inSameDayAs: latestNavigableDate)
-        case .week: return isLastCompleteWeek
-        case .month: return isCurrentMonth
+        case .week:
+            // At latest if the week contains the latest navigable date
+            let latestDay = calendar.startOfDay(for: latestNavigableDate)
+            return weekStart <= latestDay && weekEnd >= latestDay
+        case .month:
+            // At latest if the month contains the latest navigable date
+            let latestDay = calendar.startOfDay(for: latestNavigableDate)
+            return monthStart <= latestDay && monthEnd >= latestDay
         case .year: return isCurrentYear
         case .custom:
             return calendar.isDate(customEndDate, inSameDayAs: latestNavigableDate)
@@ -418,13 +481,11 @@ struct HistoryView: View {
                     // Ensure we start with a date that has finalized data
                     // Uses day_rates as a reliable canary for data availability
                     await api.refreshLatestCompleteDataDate()
-                    if let latestDate = api.latestCompleteDataDate {
-                        let targetDate = calendar.startOfDay(for: selectedDate)
-                        let latestDay = calendar.startOfDay(for: latestDate)
-                        if targetDate > latestDay {
-                            // Selected date doesn't have data yet, adjust to latest available
-                            selectedDate = latestDate
-                        }
+                    let targetDate = calendar.startOfDay(for: selectedDate)
+                    let latestDay = calendar.startOfDay(for: latestNavigableDate)
+                    if targetDate > latestDay {
+                        // Selected date doesn't have data yet, adjust to latest available
+                        selectedDate = latestNavigableDate
                     }
                     triggerLoad()
                 }
@@ -524,7 +585,7 @@ struct HistoryView: View {
     private var dataContent: some View {
         VStack(spacing: 20) {
             summaryCardsSection
-            
+
             // Operational context for day view (compact summary)
             if viewMode == .day {
                 operationalSummarySection
@@ -536,7 +597,7 @@ struct HistoryView: View {
             Spacer(minLength: 20)
         }
     }
-    
+
     private var summaryCardsSection: some View {
             VStack {
                 // Day view: use dayFinancialSummary for accurate single-day financials
@@ -1034,19 +1095,33 @@ struct HistoryView: View {
         // Use task to check data availability before loading
         Task {
             await api.refreshLatestCompleteDataDate()
-            if let latestDate = api.latestCompleteDataDate {
-                let targetDate = calendar.startOfDay(for: selectedDate)
-                let latestDay = calendar.startOfDay(for: latestDate)
-                if targetDate > latestDay {
-                    await MainActor.run {
-                        selectedDate = latestDate
-                    }
+            let targetDate = calendar.startOfDay(for: selectedDate)
+            let latestDay = calendar.startOfDay(for: latestNavigableDate)
+            if targetDate > latestDay {
+                await MainActor.run {
+                    selectedDate = latestNavigableDate
                 }
             }
             triggerLoad()
         }
     }
     
+    /// Convert LVCashflowSummary to dayFinancialSummary tuple
+    private func cashflowToFinancialSummary(_ cf: LVCashflowSummary) -> (sold: Double, bought: Double, supply: Double, net: Double, importKwh: Double, exportKwh: Double) {
+        let sold = cf.totalSales
+        let supply = cf.networkAccessCost + cf.localvoltsFee
+        let bought = cf.spotEnergyCost + cf.networkEnergyCost + cf.certificatesCost
+        let net = -cf.netCosts
+        return (
+            sold: ((sold) * 100).rounded() / 100,
+            bought: ((bought) * 100).rounded() / 100,
+            supply: ((supply) * 100).rounded() / 100,
+            net: ((net) * 100).rounded() / 100,
+            importKwh: cf.energyPurchasedKwh,
+            exportKwh: cf.energySoldTotalKwh
+        )
+    }
+
     /// Centralized load trigger - cancels any in-flight load before starting new one
     private func triggerLoad(forceRefresh: Bool = false) {
         loadingTask?.cancel()
@@ -1059,17 +1134,21 @@ struct HistoryView: View {
     func loadHistory(forceRefresh: Bool = false) async {
         // Check for cancellation at start
         guard !Task.isCancelled else { return }
-        
+
         isLoading = true
         dataSourceLabel = nil
         daySummary = nil
         tariffPeriods = []
         tariffDefinitions = []
         historicalWeather = []
+
+        // Ensure we know the latest finalized date before loading any view mode
+        await api.refreshLatestCompleteDataDate()
+
         await Task.yield()
-        
+
         var fetchedRecords: [MeterRecord] = []
-        
+
         switch viewMode {
         case .day:
             // Check for cancellation before API calls
@@ -1160,29 +1239,43 @@ struct HistoryView: View {
 
                 // Use LV settlement data if available (authoritative source)
                 // Falls back to P2P premium imputation if no settlement data
-                // Fetch on demand if missing
-                if PowstonDataStore.shared.getLVCashflowSummary(siteId: siteId, date: selectedDate) == nil,
+                // Fetch on demand if missing or recent (last 3 days may have incomplete data)
+                let recentCutoff = calendar.date(byAdding: .day, value: -3, to: calendar.startOfDay(for: Date())) ?? Date()
+                let isRecentDay = dayStart >= recentCutoff
+                if (isRecentDay || PowstonDataStore.shared.getLVCashflowSummary(siteId: siteId, date: selectedDate) == nil),
                    LocalVoltsService.shared.hasCredentials {
-                    let dayStart = calendar.startOfDay(for: selectedDate)
-                    let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
                     _ = await LocalVoltsService.shared.fetchSettlementOnDemand(
                         siteId: siteId, from: dayStart, to: dayEnd)
+                    // Recalculate P2P from freshly fetched trade data
+                    if let p2pData = PowstonDataStore.shared.calculateP2PPremium(siteId: siteId, date: selectedDate) {
+                        p2pRevenue = p2pData.p2pRevenue
+                        p2pSpotEquivalent = p2pData.spotEquivalent
+                        p2pSellRevenue = p2pData.sellRevenue
+                        p2pSellKwh = p2pData.sellKwh
+                        p2pSellSpotEquivalent = p2pData.sellSpotEquivalent
+                        p2pBuyCost = p2pData.buyCost
+                        p2pBuyKwh = p2pData.buyKwh
+                        p2pBuySpotEquivalent = p2pData.buySpotEquivalent
+                        p2pNTB = p2pData.ntb
+                    }
                 }
-                if let lvCashflow = PowstonDataStore.shared.getLVCashflowSummary(siteId: siteId, date: selectedDate) {
-                    let sold = lvCashflow.totalSales
-                    let supply = lvCashflow.networkAccessCost + lvCashflow.localvoltsFee  // Fixed daily grid connection costs
-                    let bought = lvCashflow.spotEnergyCost + lvCashflow.networkEnergyCost + lvCashflow.certificatesCost  // Variable energy costs
-                    let net = -lvCashflow.netCosts  // LV netCosts is positive=cost, we want positive=profit
-                    dayFinancialSummary = (
-                        sold: ((sold) * 100).rounded() / 100,
-                        bought: ((bought) * 100).rounded() / 100,
-                        supply: ((supply) * 100).rounded() / 100,
-                        net: ((net) * 100).rounded() / 100,
-                        importKwh: lvCashflow.energyPurchasedKwh,
-                        exportKwh: lvCashflow.energySoldTotalKwh
-                    )
-                    dayEmissionsKgCO2e = lvCashflow.emissions > 0 ? lvCashflow.emissions : nil
-                    dataSourceLabel = "LV Settlement"
+                if PowstonDataStore.shared.getLVCashflowSummary(siteId: siteId, date: selectedDate) != nil {
+                    // Always recompute from accumulated intervals (stored lv_daily_cashflow
+                    // may be stale — only reflects last Identity batch, not full accumulation)
+                    let intFormatter = DateFormatter()
+                    intFormatter.dateFormat = "yyyy-MM-dd"
+                    intFormatter.timeZone = TimeZone(identifier: "Australia/Brisbane")
+                    let intDateStr = intFormatter.string(from: selectedDate)
+                    let allIntervals = PowstonDataStore.shared.getSettlementIntervals(siteId: siteId, date: intDateStr)
+
+                    if !allIntervals.isEmpty {
+                        let allCashflow = allIntervals.cashflowSummary()
+                        dayFinancialSummary = cashflowToFinancialSummary(allCashflow)
+                        dayEmissionsKgCO2e = allCashflow.emissions > 0 ? allCashflow.emissions : nil
+                        dataSourceLabel = "LV Settlement"
+                    } else {
+                        dataSourceLabel = "LV Settlement"
+                    }
                 } else {
                     // Fallback: adjust Powston API data with P2P premium imputation
                     let p2pSellPremium = p2pSellRevenue - p2pSellSpotEquivalent
@@ -1247,9 +1340,18 @@ struct HistoryView: View {
                                     )
 
                 // Override actualCost with LV settlement data if available
-                if let sa = savingsAnalysis,
-                   let lvCashflow = PowstonDataStore.shared.getLVCashflowSummary(siteId: siteId, date: selectedDate) {
-                    savingsAnalysis = sa.withActualCost(lvCashflow.netCosts)
+                // Prefer recomputed from intervals (stored cashflow may be stale)
+                if let sa = savingsAnalysis {
+                    let saFormatter = DateFormatter()
+                    saFormatter.dateFormat = "yyyy-MM-dd"
+                    saFormatter.timeZone = TimeZone(identifier: "Australia/Brisbane")
+                    let saDateStr = saFormatter.string(from: selectedDate)
+                    let saIntervals = PowstonDataStore.shared.getSettlementIntervals(siteId: siteId, date: saDateStr)
+                    if !saIntervals.isEmpty {
+                        savingsAnalysis = sa.withActualCost(saIntervals.cashflowSummary().netCosts)
+                    } else if let lvCashflow = PowstonDataStore.shared.getLVCashflowSummary(siteId: siteId, date: selectedDate) {
+                        savingsAnalysis = sa.withActualCost(lvCashflow.netCosts)
+                    }
                 }
             }
 
@@ -1257,39 +1359,34 @@ struct HistoryView: View {
             if dayFinancialSummary == nil, let siteId = api.selectedSite?.id,
                let site = api.selectedSite,
                LocalVoltsService.shared.hasCredentials {
-                // Fetch on demand if not already persisted
-                if PowstonDataStore.shared.getLVCashflowSummary(siteId: siteId, date: selectedDate) == nil {
+                // Fetch on demand if not already persisted, or if recent (may be incomplete)
+                let fallbackRecentCutoff = calendar.date(byAdding: .day, value: -3, to: calendar.startOfDay(for: Date())) ?? Date()
+                let fallbackIsRecent = dayStart >= fallbackRecentCutoff
+                if fallbackIsRecent || PowstonDataStore.shared.getLVCashflowSummary(siteId: siteId, date: selectedDate) == nil {
                     _ = await LocalVoltsService.shared.fetchSettlementOnDemand(
                         siteId: siteId, from: dayStart, to: dayEnd)
                 }
-                if let lvCashflow = PowstonDataStore.shared.getLVCashflowSummary(siteId: siteId, date: selectedDate) {
-                    let sold = lvCashflow.totalSales
-                    let supply = lvCashflow.networkAccessCost + lvCashflow.localvoltsFee
-                    let bought = lvCashflow.spotEnergyCost + lvCashflow.networkEnergyCost + lvCashflow.certificatesCost
-                    let net = -lvCashflow.netCosts
-                    dayFinancialSummary = (
-                        sold: ((sold) * 100).rounded() / 100,
-                        bought: ((bought) * 100).rounded() / 100,
-                        supply: ((supply) * 100).rounded() / 100,
-                        net: ((net) * 100).rounded() / 100,
-                        importKwh: lvCashflow.energyPurchasedKwh,
-                        exportKwh: lvCashflow.energySoldTotalKwh
-                    )
-                    dayEmissionsKgCO2e = lvCashflow.emissions > 0 ? lvCashflow.emissions : nil
-                    dataSourceLabel = "LV Settlement"
-
-                    // Build savings analysis from LV settlement intervals
+                if PowstonDataStore.shared.getLVCashflowSummary(siteId: siteId, date: selectedDate) != nil {
+                    // Always recompute from accumulated intervals — stored lv_daily_cashflow
+                    // may be stale (only reflects last Identity batch, not full accumulation)
                     let formatter = DateFormatter()
                     formatter.dateFormat = "yyyy-MM-dd"
                     formatter.timeZone = TimeZone(identifier: "Australia/Brisbane")
                     let dateStr = formatter.string(from: selectedDate)
                     let intervals = PowstonDataStore.shared.getSettlementIntervals(siteId: siteId, date: dateStr)
+
                     if !intervals.isEmpty {
+                        let allCashflow = intervals.cashflowSummary()
+                        dayFinancialSummary = cashflowToFinancialSummary(allCashflow)
+                        dayEmissionsKgCO2e = allCashflow.emissions > 0 ? allCashflow.emissions : nil
+                        dataSourceLabel = "LV Settlement"
+
+                        // Build savings analysis from intervals + recomputed cashflow
                         let batteryCapacity = Double(site.installedBattery ?? 0) / 1000.0
                         let calculator = SavingsAnalysisCalculator()
                         savingsAnalysis = calculator.calculateFromLVSettlement(
                             intervals: intervals,
-                            cashflow: lvCashflow,
+                            cashflow: allCashflow,
                             batteryCapacityKwh: batteryCapacity,
                             flatBuyRate: UserDefaults.standard.double(forKey: "comparison_buy_rate").nonZero ?? 33.0,
                             flatSellRate: UserDefaults.standard.double(forKey: "comparison_sell_rate").nonZero ?? 5.0,
@@ -1471,6 +1568,16 @@ struct HistoryView: View {
             if cachedDailySummaries.isEmpty {
                 cachedDailySummaries = await api.fetchWeekDailyBreakdownCumulative(containing: selectedDate)
             }
+
+            // Fill gaps with LV settlement data for dates missing from Powston
+            if let siteId = api.selectedSite?.id {
+                let effectiveEnd = min(weekEnd, calendar.startOfDay(for: latestNavigableDate))
+                cachedDailySummaries = fillGapsWithLVSettlement(cachedDailySummaries, siteId: siteId, from: weekStart, to: effectiveEnd)
+            }
+
+            // Exclude days past the latest finalized date
+            let weekCutoff = calendar.startOfDay(for: latestNavigableDate)
+            cachedDailySummaries = cachedDailySummaries.filter { calendar.startOfDay(for: $0.date) <= weekCutoff }
 
             isLoadingSummary = false; records = []
             return
@@ -1657,6 +1764,16 @@ struct HistoryView: View {
                     dataSourceLabel = "LV Settlement"
                 }
             }
+
+            // Fill gaps with LV settlement data for dates missing from Powston
+            if let siteId = api.selectedSite?.id {
+                let effectiveEnd = min(monthEnd, calendar.startOfDay(for: latestNavigableDate))
+                cachedDailySummaries = fillGapsWithLVSettlement(cachedDailySummaries, siteId: siteId, from: monthStart, to: effectiveEnd)
+            }
+
+            // Exclude days past the latest finalized date
+            let monthCutoff = calendar.startOfDay(for: latestNavigableDate)
+            cachedDailySummaries = cachedDailySummaries.filter { calendar.startOfDay(for: $0.date) <= monthCutoff }
 
             isLoadingSummary = false; records = []
             return
@@ -2006,6 +2123,16 @@ struct HistoryView: View {
                 cachedDailySummaries = await api.fetchDailyBreakdownCumulative(startDate: customStartDate, endDate: customEndDate)
             }
 
+            // Fill gaps with LV settlement data for dates missing from Powston
+            if let siteId = api.selectedSite?.id {
+                let effectiveEnd = min(customEndDate, calendar.startOfDay(for: latestNavigableDate))
+                cachedDailySummaries = fillGapsWithLVSettlement(cachedDailySummaries, siteId: siteId, from: customStartDate, to: effectiveEnd)
+            }
+
+            // Exclude days past the latest finalized date
+            let customCutoff = calendar.startOfDay(for: latestNavigableDate)
+            cachedDailySummaries = cachedDailySummaries.filter { calendar.startOfDay(for: $0.date) <= customCutoff }
+
             isLoadingSummary = false; records = []
             return
         }
@@ -2170,8 +2297,13 @@ struct HistoryView: View {
         case .day:
             // Jump to the latest complete data date
             selectedDate = latestNavigableDate
-        case .week: selectedDate = lastCompleteWeekStart
-        case .month: selectedDate = currentMonthStart
+        case .week:
+            // Jump to the week containing the latest finalized date
+            selectedDate = latestNavigableDate
+        case .month:
+            // Jump to the month containing the latest finalized date
+            let latest = latestNavigableDate
+            selectedDate = calendar.date(from: calendar.dateComponents([.year, .month], from: latest)) ?? latest
         case .year: selectedDate = currentYearStart
         case .custom:
             customEndDate = latestNavigableDate
@@ -2185,7 +2317,9 @@ struct HistoryView: View {
         if viewMode == .month {
             if let newDate = calendar.date(byAdding: .month, value: days > 0 ? 1 : -1, to: selectedDate) {
                 let newMonthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: newDate)) ?? newDate
-                if newMonthStart <= currentMonthStart {
+                // Only advance if the new month contains finalized data
+                let latestDay = calendar.startOfDay(for: latestNavigableDate)
+                if newMonthStart <= latestDay {
                     selectedDate = newDate
                     triggerLoad()
                 }
@@ -2226,8 +2360,10 @@ struct HistoryView: View {
                     triggerLoad()
                 }
             } else {
+                // Week: only advance if the new week contains finalized data
                 let newWeekStart = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: newDate)) ?? newDate
-                if newWeekStart <= currentWeekStart {
+                let latestDay = calendar.startOfDay(for: latestNavigableDate)
+                if newWeekStart <= latestDay {
                     selectedDate = newDate
                     triggerLoad()
                 }

@@ -98,13 +98,17 @@ extension PowstonDataStore {
             calendar.startOfDay(for: trade.periodStart)
         }
 
+        // Recent days (last 3 days) are mutable — settlement data may arrive
+        // incomplete on first fetch and fill in over subsequent hours
+        let recentCutoff = calendar.date(byAdding: .day, value: -3, to: todayStart) ?? todayStart
+
         try db.write { db in
             for (dayStart, dayTrades) in tradesByDate {
                 let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart)!
-                let isSettled = dayStart < todayStart
+                let isFullySettled = dayStart < recentCutoff
 
-                if isSettled {
-                    // Historical: only replace if no existing data for this date
+                if isFullySettled {
+                    // Historical (>3 days old): only replace if no existing data
                     let existingCount = try Int.fetchOne(
                         db,
                         sql: "SELECT COUNT(*) FROM lv_interval_trades WHERE site_id = ? AND period_start >= ? AND period_start < ?",
@@ -112,7 +116,7 @@ extension PowstonDataStore {
                     ) ?? 0
 
                     if existingCount > 0 {
-                        continue  // Settled data is immutable — skip
+                        continue  // Fully settled data is immutable — skip
                     }
                 }
 

@@ -341,6 +341,18 @@ extension PowstonDataStore {
             }
         }
 
+        // Settlement data fallback: if lv_interval_trades are incomplete (e.g. only captured
+        // partial Identity response), use authoritative settlement totals from lv_daily_cashflow.
+        // QtyReport doesn't return individual P2P counterparty trades for historical dates,
+        // so lv_interval_trades can be incomplete while settlement data is complete.
+        if let cashflow = getLVCashflowSummary(siteId: siteId, date: normalizedDate) {
+            if cashflow.p2pMatchedRevenue > sellRevenue + 0.01 {
+                sellRevenue = cashflow.p2pMatchedRevenue
+                sellKwh = cashflow.energySoldP2PKwh
+                hasData = true
+            }
+        }
+
         guard hasData else { return nil }
 
         // Build per-interval effective spot rate from action records (earnings/kWh)

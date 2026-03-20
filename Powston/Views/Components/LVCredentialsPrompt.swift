@@ -155,7 +155,7 @@ struct LVCredentialsGate<Content: View, Fallback: View>: View {
     @ViewBuilder var fallback: () -> Fallback
 
     private var hasCredentials: Bool {
-        LocalVoltsCredentialManager.shared.hasCredentials
+        LocalVoltsService.shared.hasCredentials
     }
 
     var body: some View {

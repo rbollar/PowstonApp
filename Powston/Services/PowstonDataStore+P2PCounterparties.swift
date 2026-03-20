@@ -147,9 +147,10 @@ extension PowstonDataStore {
     /// Get all counterparty trades for a site
     func getP2PCounterpartyTrades(siteId: Int) -> [P2PCounterpartyTrade] {
         guard let db = dbQueue else { return [] }
-        
+
         do {
-            return try db.read { db in
+            // CSV-imported trades
+            var trades = try db.read { db in
                 try P2PCounterpartyTrade.fetchAll(
                     db,
                     sql: """
@@ -160,6 +161,40 @@ extension PowstonDataStore {
                     arguments: [siteId]
                 )
             }
+
+            // Also include LV interval trades (from QtyReport API)
+            let lvTableExists = try db.read { db in
+                try db.tableExists("lv_interval_trades")
+            }
+            if lvTableExists {
+                let lvTrades = try db.read { db in
+                    try LVIntervalTrade.fetchAll(
+                        db,
+                        sql: """
+                            SELECT * FROM lv_interval_trades
+                            WHERE site_id = ?
+                            """,
+                        arguments: [siteId]
+                    )
+                }
+                let lvSentinel = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+                for lv in lvTrades {
+                    trades.append(P2PCounterpartyTrade(
+                        id: lv.id,
+                        tradeRecordId: lvSentinel,
+                        siteId: lv.siteId,
+                        counterpartyName: lv.counterpartyName,
+                        volumeKwh: lv.volumeKwh,
+                        priceCents: lv.priceCents,
+                        tradeDate: lv.periodStart,
+                        importedAt: lv.fetchedAt,
+                        direction: lv.direction == .sell ? .sell : .buy,
+                        facility: lv.cpFacility
+                    ))
+                }
+            }
+
+            return trades
         } catch {
             print("❌ getP2PCounterpartyTrades failed: \(error)")
             return []
@@ -774,75 +809,48 @@ extension PowstonDataStore {
     /// Get market demand aggregated by exact price point (1¢ buckets)
     /// Shows actual vs provisional (forecast) volume and revenue at each price
     func getP2PMarketDemandByPrice(siteId: Int) -> [P2PPriceDemand] {
-        guard let db = dbQueue else { return [] }
-
         // Get all trade records to identify provisional ones
         let tradeRecords = getP2PTradeRecords(siteId: siteId)
         let provisionalRecordIds = Set(tradeRecords.filter { $0.isProvisional }.map { $0.id.uuidString })
 
-        do {
-            _ = try db.read { db in
-                try Row.fetchAll(
-                    db,
-                    sql: """
-                        SELECT
-                            ROUND(ct.price_cents) as price_bucket,
-                            ct.trade_record_id,
-                            SUM(ct.volume_kwh) as volume,
-                            COUNT(DISTINCT ct.counterparty_name) as buyer_count
-                        FROM p2p_counterparty_trades ct
-                        INNER JOIN p2p_trade_records tr ON ct.trade_record_id = tr.id
-                        WHERE ct.site_id = ?
-                        GROUP BY ROUND(ct.price_cents), ct.trade_record_id
-                        ORDER BY price_bucket ASC
-                        """,
-                    arguments: [siteId]
-                )
+        // Aggregate by price, separating actual vs provisional
+        var demandByPrice: [Int: (actualVolume: Double, provisionalVolume: Double, actualBuyers: Set<String>, provisionalBuyers: Set<String>)] = [:]
+
+        // Get all trades (CSV imports + LV interval trades)
+        let allTrades = getP2PCounterpartyTrades(siteId: siteId)
+
+        for trade in allTrades {
+            let priceBucket = Int(round(trade.priceCents))
+            let isProvisional = provisionalRecordIds.contains(trade.tradeRecordId.uuidString)
+
+            var existing = demandByPrice[priceBucket] ?? (actualVolume: 0, provisionalVolume: 0, actualBuyers: Set(), provisionalBuyers: Set())
+
+            if isProvisional {
+                existing.provisionalVolume += trade.volumeKwh
+                existing.provisionalBuyers.insert(trade.counterpartyName)
+            } else {
+                existing.actualVolume += trade.volumeKwh
+                existing.actualBuyers.insert(trade.counterpartyName)
             }
 
-            // Aggregate by price, separating actual vs provisional
-            var demandByPrice: [Int: (actualVolume: Double, provisionalVolume: Double, actualBuyers: Set<String>, provisionalBuyers: Set<String>)] = [:]
-
-            // Need to get buyer names per price per record type
-            let allTrades = getP2PCounterpartyTrades(siteId: siteId)
-
-            for trade in allTrades {
-                let priceBucket = Int(round(trade.priceCents))
-                let isProvisional = provisionalRecordIds.contains(trade.tradeRecordId.uuidString)
-
-                var existing = demandByPrice[priceBucket] ?? (actualVolume: 0, provisionalVolume: 0, actualBuyers: Set(), provisionalBuyers: Set())
-
-                if isProvisional {
-                    existing.provisionalVolume += trade.volumeKwh
-                    existing.provisionalBuyers.insert(trade.counterpartyName)
-                } else {
-                    existing.actualVolume += trade.volumeKwh
-                    existing.actualBuyers.insert(trade.counterpartyName)
-                }
-
-                demandByPrice[priceBucket] = existing
-            }
-
-            // Convert to array sorted by price
-            return demandByPrice.map { (price, data) in
-                let actualRevenue = data.actualVolume * Double(price) / 100.0
-                let provisionalRevenue = data.provisionalVolume * Double(price) / 100.0
-
-                return P2PPriceDemand(
-                    priceCents: Double(price),
-                    actualVolumeKwh: data.actualVolume,
-                    provisionalVolumeKwh: data.provisionalVolume,
-                    actualRevenue: actualRevenue,
-                    provisionalRevenue: provisionalRevenue,
-                    actualBuyerCount: data.actualBuyers.count,
-                    provisionalBuyerCount: data.provisionalBuyers.count
-                )
-            }.sorted { $0.priceCents < $1.priceCents }
-
-        } catch {
-            print("❌ getP2PMarketDemandByPrice failed: \(error)")
-            return []
+            demandByPrice[priceBucket] = existing
         }
+
+        // Convert to array sorted by price
+        return demandByPrice.map { (price, data) in
+            let actualRevenue = data.actualVolume * Double(price) / 100.0
+            let provisionalRevenue = data.provisionalVolume * Double(price) / 100.0
+
+            return P2PPriceDemand(
+                priceCents: Double(price),
+                actualVolumeKwh: data.actualVolume,
+                provisionalVolumeKwh: data.provisionalVolume,
+                actualRevenue: actualRevenue,
+                provisionalRevenue: provisionalRevenue,
+                actualBuyerCount: data.actualBuyers.count,
+                provisionalBuyerCount: data.provisionalBuyers.count
+            )
+        }.sorted { $0.priceCents < $1.priceCents }
     }
 
     // MARK: - iCloud KVS Sync

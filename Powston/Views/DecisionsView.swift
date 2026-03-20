@@ -7,31 +7,16 @@ import SwiftUI
 
 struct DecisionsView: View {
     @EnvironmentObject var api: PowstonAPI
-    @Environment(\.verticalSizeClass) var verticalSizeClass
-    @StateObject private var orientationManager = OrientationManager.shared
     @AppStorage("scorecard_enabled") private var scorecardEnabled: Bool = true
     @AppStorage("show_experimental_features") private var showExperimentalFeatures: Bool = false
     @State private var showDecisionTrace = false
-    
-    var isLandscape: Bool {
-        verticalSizeClass == .compact
-    }
-    
+    @State private var showActionsTable = false
+
     var body: some View {
         NavigationStack {
             Group {
                 if let d = api.data {
-                    Group {
-                        if isLandscape {
-                            ActionsTableView()
-                                .navigationTitle("Actions")
-                                .navigationBarTitleDisplayMode(.inline)
-                        } else {
-                            portraitView(d)
-                        }
-                    }
-                    .animation(.none, value: isLandscape)
-                    .toolbar(isLandscape ? .hidden : .visible, for: .tabBar)
+                    portraitView(d)
                 } else if api.selectedSite != nil && !api.apiKey.isEmpty {
                     // Zero-inverter site — show what works without inverter data
                     ScrollView {
@@ -101,11 +86,11 @@ struct DecisionsView: View {
                 }
             }
         }
-        .onAppear {
-            orientationManager.allowLandscape()
-        }
-        .onDisappear {
-            orientationManager.lockToPortrait()
+        .fullScreenCover(isPresented: $showActionsTable) {
+            LandscapeContainerView {
+                ActionsTableView()
+                    .environmentObject(api)
+            }
         }
     }
     
@@ -159,31 +144,30 @@ struct DecisionsView: View {
                     ProfitIntelligenceCard()
                 }
 
-                // Landscape hint (dismissable) - moved down
-                if showRotateHint {
+                // Actions Table button
+                Button(action: { showActionsTable = true }) {
                     HStack(spacing: 12) {
-                        Image(systemName: "rotate.right")
+                        Image(systemName: "tablecells.badge.ellipsis")
                             .font(.title2)
                             .foregroundColor(.blue)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Rotate for Actions Table")
+                            Text("Actions Table")
                                 .font(.subheadline)
                                 .fontWeight(.medium)
-                            Text("Turn your phone to landscape to see the full actions history")
+                            Text("Full actions history in landscape view")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
                         Spacer()
-                        Button(action: { dismissRotateHint() }) {
-                            Image(systemName: "xmark")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                     .padding()
                     .background(Color.gray.opacity(0.05))
                     .cornerRadius(12)
                 }
+                .buttonStyle(.plain)
 
                 // Decision Reasons Trace (detailed, at bottom)
                 reasonCard(d)
@@ -202,24 +186,6 @@ struct DecisionsView: View {
         }
         .refreshable {
             await api.fetchData()
-        }
-    }
-    
-    // Track if user has dismissed rotate hint
-    @AppStorage("hideRotateHint") private var hideRotateHint = false
-    @State private var rotateHintDismissedThisSession = false
-    
-    var showRotateHint: Bool {
-        !hideRotateHint && !rotateHintDismissedThisSession
-    }
-    
-    func dismissRotateHint() {
-        rotateHintDismissedThisSession = true
-        // After 3 dismissals in different sessions, hide permanently
-        let dismissCount = UserDefaults.standard.integer(forKey: "rotateHintDismissCount") + 1
-        UserDefaults.standard.set(dismissCount, forKey: "rotateHintDismissCount")
-        if dismissCount >= 3 {
-            hideRotateHint = true
         }
     }
     

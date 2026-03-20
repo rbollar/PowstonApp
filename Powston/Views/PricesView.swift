@@ -34,42 +34,14 @@ struct PriceFormatter {
 
 struct PricesView: View {
     @EnvironmentObject var api: PowstonAPI
-    @Environment(\.verticalSizeClass) var verticalSizeClass
     @State private var showBuyForecast = false
-    @StateObject private var orientationManager = OrientationManager.shared
-    
-    // Track if user has dismissed rotate hint
-    @AppStorage("hidePricesRotateHint") private var hidePricesRotateHint = false
-    @State private var rotateHintDismissedThisSession = false
-    
-    var showRotateHint: Bool {
-        !hidePricesRotateHint && !rotateHintDismissedThisSession
-    }
-    
-    func dismissRotateHint() {
-        rotateHintDismissedThisSession = true
-        // After 3 dismissals in different sessions, hide permanently
-        let dismissCount = UserDefaults.standard.integer(forKey: "pricesRotateHintDismissCount") + 1
-        UserDefaults.standard.set(dismissCount, forKey: "pricesRotateHintDismissCount")
-        if dismissCount >= 3 {
-            hidePricesRotateHint = true
-        }
-    }
-    
-    var isLandscape: Bool {
-        verticalSizeClass == .compact
-    }
-    
+    @State private var showPriceGraph = false
+
     var body: some View {
         NavigationStack {
             if let d = api.data {
                 Group {
-                    if isLandscape {
-                        PriceForecastGraphView(data: d)
-                            .navigationTitle("Price Forecast")
-                            .navigationBarTitleDisplayMode(.inline)
-                    } else {
-                        List {
+                    List {
                             Section("Current") {
                                 HStack {
                                     Text("Buy Price")
@@ -140,30 +112,29 @@ struct PricesView: View {
                                 }
                             }
                             
-                            // Rotate hint (dismissible, so after forecast)
-                            if showRotateHint {
-                                Section {
+                            // Price graph button
+                            Section {
+                                Button(action: { showPriceGraph = true }) {
                                     HStack(spacing: 12) {
-                                        Image(systemName: "rotate.right")
+                                        Image(systemName: "chart.xyaxis.line")
                                             .font(.title2)
                                             .foregroundColor(.blue)
                                         VStack(alignment: .leading, spacing: 2) {
-                                            Text("Rotate for Graph View")
+                                            Text("Price Forecast Graph")
                                                 .font(.subheadline)
                                                 .fontWeight(.medium)
-                                            Text("Turn your phone to landscape to see the interactive price chart")
+                                            Text("Interactive chart in landscape view")
                                                 .font(.caption)
                                                 .foregroundColor(.secondary)
                                         }
                                         Spacer()
-                                        Button(action: { dismissRotateHint() }) {
-                                            Image(systemName: "xmark")
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                        }
+                                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
                                     }
                                     .padding(.vertical, 4)
                                 }
+                                .buttonStyle(.plain)
                             }
                             
                             // Forecast info
@@ -204,9 +175,7 @@ struct PricesView: View {
                                 SiteIndicatorPill()
                             }
                         }
-                    }
                 }
-                .toolbar(isLandscape ? .hidden : .visible, for: .tabBar)
             } else {
                 VStack(spacing: 16) {
                     Image(systemName: "chart.line.downtrend.xyaxis")
@@ -232,11 +201,13 @@ struct PricesView: View {
                 }
             }
         }
-        .onAppear {
-            orientationManager.allowLandscape()
-        }
-        .onDisappear {
-            orientationManager.lockToPortrait()
+        .fullScreenCover(isPresented: $showPriceGraph) {
+            if let d = api.data {
+                LandscapeContainerView {
+                    PriceForecastGraphView(data: d)
+                        .environmentObject(api)
+                }
+            }
         }
     }
 }
