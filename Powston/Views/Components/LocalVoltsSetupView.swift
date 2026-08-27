@@ -169,15 +169,6 @@ struct LocalVoltsSetupView: View {
                                 }
                             }
                             Spacer()
-                            if lvService.tradeCount > 0 {
-                                Text("\(lvService.tradeCount) trades")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 2)
-                                    .background(Color.gray.opacity(0.2))
-                                    .cornerRadius(8)
-                            }
                         }
                     }
 
@@ -332,9 +323,9 @@ struct LocalVoltsSetupView: View {
             password = ""  // Clear entered password
             testResult = .success("Credentials saved for this site")
 
-            // Auto-sync today after saving
+            // Kick off settlement sync after saving
             Task {
-                try? await lvService.syncToday(siteId: siteId)
+                await lvService.performDailySyncIfNeeded(siteId: siteId)
             }
         } catch {
             testResult = .failure("Failed to save: \(error.localizedDescription)")

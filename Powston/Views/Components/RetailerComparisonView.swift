@@ -199,12 +199,6 @@ struct RetailerComparisonView: View {
                 )
 
                 tipRow(
-                    icon: "person.2.circle",
-                    title: "P2P revenue matters",
-                    description: "Traditional retailers don't offer P2P trading"
-                )
-
-                tipRow(
                     icon: "chart.line.uptrend.xyaxis",
                     title: "Wholesale volatility",
                     description: "LocalVolts costs vary with spot prices; EME assumes stable rates"
@@ -289,13 +283,6 @@ struct RetailerComparisonView: View {
         let bought = summary.rateCostsDollars
         let supply = sold - bought - summary.netProfitDollars
         var netCost = -summary.netProfitDollars  // positive = cost to user
-
-        // P2P premium is NOT included in Powston API earnings — add it
-        if let p2pData = PowstonDataStore.shared.calculateP2PPremiumForRangeDetailed(
-            siteId: siteId, from: startDate, to: yesterday) {
-            let p2pSellPremium = p2pData.sellRevenue - p2pData.sellSpotEquivalent
-            netCost -= p2pSellPremium
-        }
 
         let avgImportPrice = summary.totalEnergyImported > 0 ? (bought / summary.totalEnergyImported) * 100 : 0
         let avgExportPrice = summary.totalEnergyExported > 0 ? (sold / summary.totalEnergyExported) * 100 : 0

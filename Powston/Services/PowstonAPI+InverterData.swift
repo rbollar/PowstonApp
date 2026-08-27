@@ -234,6 +234,7 @@ extension PowstonAPI {
             amberSiteId: nil,
             localvoltsKey: "demo_key",
             localvoltsPartnerId: nil,
+            activeRetailer: "localvolts",
             marketCosts: nil
         )
     }

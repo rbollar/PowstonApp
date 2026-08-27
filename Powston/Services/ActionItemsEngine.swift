@@ -28,7 +28,6 @@ class ActionItemsEngine: ObservableObject {
     private let scorecardCache = ScorecardCache.shared
     private let bargainHunterAnalysis = BargainHunterAnalysis()
     private let decisionEfficiencyAnalysis = DecisionEfficiencyAnalysis()
-    private let peerPowerAnalysis = PeerPowerAnalysis()
 
     // MARK: - Cache
 
@@ -87,21 +86,15 @@ class ActionItemsEngine: ObservableObject {
             allItems.append(contentsOf: efficiencyItems)
         }
 
-        // 4. Collect from Peer Power (P2P)
-        loadingProgress = "Analyzing P2P opportunities..."
-        if let p2pItems = await collectFromPeerPower(config: config, api: api) {
-            allItems.append(contentsOf: p2pItems)
-        }
-
-        // 5. Resolve conflicts based on goal
+        // 4. Resolve conflicts based on goal
         loadingProgress = "Resolving conflicts..."
         let (resolvedItems, conflictsFiltered) = resolveConflicts(allItems, goal: goal)
 
-        // 6. Calculate combined impact with diminishing returns
+        // 5. Calculate combined impact with diminishing returns
         let rawTotal = allItems.reduce(0) { $0 + $1.potentialImpact }
         let combinedImpact = calculateCombinedImpact(resolvedItems)
 
-        // 7. Sort by goal alignment and priority
+        // 6. Sort by goal alignment and priority
         let sortedItems = prioritizeForGoal(resolvedItems, goal: goal)
 
         // Build result
@@ -280,66 +273,6 @@ class ActionItemsEngine: ObservableObject {
         return items
     }
 
-    private func collectFromPeerPower(config: AnalysisConfig, api: PowstonAPI) async -> [ActionItem]? {
-        // Check cache first
-        if let cached = peerPowerAnalysis.result,
-           Date().timeIntervalSince(cached.analysisDate) < cacheValiditySeconds {
-            return convertPeerPowerToItems(cached, batteryCapacityKwh: config.batteryCapacityKWh)
-        }
-
-        // Run analysis
-        await peerPowerAnalysis.runAnalysis(api: api, config: config)
-
-        // Check if analysis produced results
-        guard let result = peerPowerAnalysis.result else {
-            return nil
-        }
-
-        return convertPeerPowerToItems(result, batteryCapacityKwh: config.batteryCapacityKWh)
-    }
-
-    private func convertPeerPowerToItems(_ result: PeerPowerResult, batteryCapacityKwh: Double) -> [ActionItem] {
-        // Consolidate P2P into a single item — price + window together
-        guard result.maxOpportunityDollars > 5 else { return [] }
-
-        let rec = result.recommendation
-        let windowStr: String
-        if rec.dailyKwh > 5 {
-            let startHr = rec.startHour > 12 ? rec.startHour - 12 : rec.startHour
-            let startAP = rec.startHour >= 12 ? "PM" : "AM"
-            let endHr = rec.endHour > 12 ? rec.endHour - 12 : rec.endHour
-            let endAP = rec.endHour >= 12 ? "PM" : "AM"
-            windowStr = " (\(startHr)\(startAP)-\(endHr)\(endAP), ~\(String(format: "%.0f", rec.dailyKwh)) kWh/day)"
-        } else {
-            windowStr = ""
-        }
-
-        // System size gating: adjust priority and description based on battery capacity
-        let priority: ActionPriority
-        let sizeNote: String
-        if batteryCapacityKwh >= 40 {
-            priority = .medium
-            sizeNote = ""
-        } else if batteryCapacityKwh >= 15 {
-            priority = .low
-            sizeNote = " Note: With \(Int(batteryCapacityKwh)) kWh battery, P2P returns will be moderate."
-        } else {
-            priority = .low
-            sizeNote = " Note: With \(Int(batteryCapacityKwh)) kWh battery, P2P returns may only be modest. Factor in battery cycling costs."
-        }
-
-        return [ActionItem(
-            source: .peerPower,
-            category: .p2pPricing,
-            title: "P2P at \(String(format: "%.0f", result.recommendedPrice))¢\(windowStr)",
-            description: "Sell directly to buyers at a price that beats spot for you and grid for them. Win-win rate: \(String(format: "%.0f", result.winWinPercent))%. Extra revenue above spot: ~$\(String(format: "%.0f", result.maxOpportunityDollars))/mo.\(sizeNote)",
-            potentialImpact: result.maxOpportunityDollars,
-            confidence: result.winWinPercent / 100,
-            priority: priority,
-            conflictsWith: []
-        )]
-    }
-
     // MARK: - Conflict Resolution
 
     private func resolveConflicts(_ items: [ActionItem], goal: UserGoal) -> ([ActionItem], Int) {
@@ -386,7 +319,6 @@ class ActionItemsEngine: ObservableObject {
     // Strategy buckets:
     // - EXPORTS: exportFloor, exportTiming, priceResponse (export-related)
     // - IMPORTS: importTiming, batteryReserve
-    // - P2P: p2pPricing, p2pWindow (additive but higher risk)
     //
 
     /// Calculate realistic combined impact - best strategy per bucket, not sum of all
@@ -394,46 +326,31 @@ class ActionItemsEngine: ObservableObject {
         // Group into strategy buckets
         let exportCategories: Set<ActionCategory> = [.exportFloor, .exportTiming, .priceResponse]
         let importCategories: Set<ActionCategory> = [.importTiming, .batteryReserve]
-        let p2pCategories: Set<ActionCategory> = [.p2pPricing, .p2pWindow]
 
         let exportItems = items.filter { exportCategories.contains($0.category) }
         let importItems = items.filter { importCategories.contains($0.category) }
-        let p2pItems = items.filter { p2pCategories.contains($0.category) }
 
         // Best strategy per bucket (not sum - they address same opportunity)
         let bestExport = exportItems.map { $0.potentialImpact }.max() ?? 0
         let bestImport = importItems.map { $0.potentialImpact }.max() ?? 0
-        let bestP2P = p2pItems.map { $0.potentialImpact }.max() ?? 0
 
-        // Import is independent of export/P2P
-        // P2P partially or fully replaces export opportunity — same energy, different channel
-        // Take the max of (export, P2P) rather than summing, since they address the same kWh
-        let bestExportOrP2P = max(bestExport, bestP2P)
-        return bestExportOrP2P + bestImport
+        return bestExport + bestImport
     }
 
     /// Detailed breakdown for display
     func calculateImpactBreakdown(_ items: [ActionItem]) -> ImpactBreakdown {
         let exportCategories: Set<ActionCategory> = [.exportFloor, .exportTiming, .priceResponse]
         let importCategories: Set<ActionCategory> = [.importTiming, .batteryReserve]
-        let p2pCategories: Set<ActionCategory> = [.p2pPricing, .p2pWindow]
 
         let exportItems = items.filter { exportCategories.contains($0.category) }
         let importItems = items.filter { importCategories.contains($0.category) }
-        let p2pItems = items.filter { p2pCategories.contains($0.category) }
 
         let bestExport = exportItems.max(by: { $0.potentialImpact < $1.potentialImpact })
-        let bestP2P = p2pItems.max(by: { $0.potentialImpact < $1.potentialImpact })
-
-        // P2P replaces export opportunity (same energy, different channel).
-        // Show whichever is higher as the export/revenue strategy.
-        let p2pReplacesExport = (bestP2P?.potentialImpact ?? 0) > (bestExport?.potentialImpact ?? 0)
 
         return ImpactBreakdown(
-            bestExportStrategy: p2pReplacesExport ? nil : bestExport,
+            bestExportStrategy: bestExport,
             bestImportStrategy: importItems.max(by: { $0.potentialImpact < $1.potentialImpact }),
-            p2pOpportunity: bestP2P,
-            exportAlternatives: p2pReplacesExport ? exportItems.count : max(0, exportItems.count - 1),
+            exportAlternatives: max(0, exportItems.count - 1),
             importAlternatives: max(0, importItems.count - 1)
         )
     }

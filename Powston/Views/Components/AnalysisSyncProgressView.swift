@@ -45,12 +45,6 @@ private let analysisTips: [AnalysisTip] = [
         description: "Identifies expensive imports that could have been avoided if the system had waited for cheaper prices in the forecast."
     ),
     AnalysisTip(
-        icon: "person.2.fill",
-        iconColor: .green,
-        title: "Peer Power",
-        description: "Analyzes P2P trading opportunities by finding price windows where both you and buyers benefit versus grid prices."
-    ),
-    AnalysisTip(
         icon: "clock.arrow.circlepath",
         iconColor: .cyan,
         title: "60 Days of History",

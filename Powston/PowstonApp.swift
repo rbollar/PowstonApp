@@ -35,24 +35,17 @@ struct PowstonApp: App {
             .onAppear {
                 // Configure DataStore with API reference
                 PowstonDataStore.shared.configure(api: api)
-                
-                // Register for P2P iCloud sync
-                PowstonDataStore.shared.registerForP2PCloudSync()
-                PowstonDataStore.shared.registerForP2PContractCloudSync()
-                PowstonDataStore.shared.registerForCounterpartyCloudSync()
-                
+
+                // One-time cleanup: stale P2P sync blobs from the removed
+                // feature share the 1MB iCloud KVS quota with credential sync
+                let kvs = NSUbiquitousKeyValueStore.default
+                for key in ["p2p_contracts_v1", "p2p_trade_records_v1", "p2p_counterparty_trades_v1"] {
+                    kvs.removeObject(forKey: key)
+                }
+
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     withAnimation(.easeOut(duration: 0.3)) {
                         showSplash = false
-                    }
-                }
-            }
-            .onChange(of: api.selectedSiteId) { oldValue, newValue in
-                if let siteId = newValue {
-                    Task { @MainActor in
-                        PowstonDataStore.shared.syncP2PRecordsFromCloud(siteId: siteId)
-                        PowstonDataStore.shared.syncP2PContractsFromCloud(siteId: siteId)
-                        PowstonDataStore.shared.syncCounterpartyTradesFromCloud(siteId: siteId)
                     }
                 }
             }

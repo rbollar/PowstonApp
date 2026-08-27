@@ -338,76 +338,6 @@ class PowstonDataStore: ObservableObject {
                 }
             }
             
-            // Migration 5: Create p2p_trade_records table
-            if try !db.tableExists("p2p_trade_records") {
-                print("🔄 Migration: Creating p2p_trade_records table")
-                try db.create(table: "p2p_trade_records") { t in
-                    t.column("id", .text).primaryKey()
-                    t.column("site_id", .integer).notNull()
-                    t.column("start_date", .datetime).notNull()
-                    t.column("end_date", .datetime).notNull()
-                    t.column("p2p_kwh", .double).notNull()
-                    t.column("p2p_revenue", .double).notNull()
-                    t.column("counterparty_count", .integer).notNull()
-                    t.column("imported_at", .datetime).notNull()
-                    t.column("source", .text).notNull()
-                }
-                
-                try db.create(
-                    index: "idx_p2p_trades_site_date",
-                    on: "p2p_trade_records",
-                    columns: ["site_id", "start_date", "end_date"]
-                )
-                print("✅ Migration complete: p2p_trade_records table created")
-            }
-            // Migration 6: Create p2p_contracts table
-            try createP2PContractSchema(db)
-            
-            // Migration 7: Create p2p_counterparty_trades table
-            try createP2PCounterpartySchema(db)
-
-            // Migration 8: Add is_provisional column to p2p_trade_records
-            if try db.tableExists("p2p_trade_records") {
-                let columns = try db.columns(in: "p2p_trade_records").map { $0.name }
-                if !columns.contains("is_provisional") {
-                    print("🔄 Migration: Adding is_provisional column to p2p_trade_records")
-                    try db.execute(sql: "ALTER TABLE p2p_trade_records ADD COLUMN is_provisional INTEGER DEFAULT 0")
-                    print("✅ Migration complete: is_provisional column added")
-                }
-            }
-
-            // Migration 9: Create p2p_counterparty_locations table
-            try createLocationsTables(db)
-
-            // Migration 10: Add direction column to p2p_contracts
-            if try db.tableExists("p2p_contracts") {
-                let columns = try db.columns(in: "p2p_contracts").map { $0.name }
-                if !columns.contains("direction") {
-                    print("🔄 Migration: Adding direction column to p2p_contracts")
-                    try db.execute(sql: "ALTER TABLE p2p_contracts ADD COLUMN direction TEXT DEFAULT 'Sell'")
-                    print("✅ Migration complete: direction column added")
-                }
-            }
-
-            // Migration 11: Add direction column to p2p_trade_records and p2p_counterparty_trades
-            if try db.tableExists("p2p_trade_records") {
-                let columns = try db.columns(in: "p2p_trade_records").map { $0.name }
-                if !columns.contains("direction") {
-                    print("🔄 Migration: Adding direction column to p2p_trade_records")
-                    try db.execute(sql: "ALTER TABLE p2p_trade_records ADD COLUMN direction TEXT DEFAULT 'Sell'")
-                    print("✅ Migration complete: direction column added to p2p_trade_records")
-                }
-            }
-
-            if try db.tableExists("p2p_counterparty_trades") {
-                let columns = try db.columns(in: "p2p_counterparty_trades").map { $0.name }
-                if !columns.contains("direction") {
-                    print("🔄 Migration: Adding direction column to p2p_counterparty_trades")
-                    try db.execute(sql: "ALTER TABLE p2p_counterparty_trades ADD COLUMN direction TEXT DEFAULT 'Sell'")
-                    print("✅ Migration complete: direction column added to p2p_counterparty_trades")
-                }
-            }
-
             // Migration 12: Add last_data_date column to sync_metadata for tracking what data date we've synced to
             if try db.tableExists("sync_metadata") {
                 let columns = try db.columns(in: "sync_metadata").map { $0.name }
@@ -417,18 +347,6 @@ class PowstonDataStore: ObservableObject {
                     print("✅ Migration complete: last_data_date column added to sync_metadata")
                 }
             }
-
-            // Migration 13: Create lv_interval_trades table for LocalVolts WebSocket data
-            try createLVTradesSchema(db)
-
-            // Migration 14: Create lv_market_contracts table for LocalVolts ContractTable data
-            try createLVMarketContractsSchema(db)
-
-            // Migration 15: Create lv_orders table for LocalVolts TradeList orders/contracts
-            try createLVOrdersSchema(db)
-
-            // Migration 16: Create contract snapshot tables for subscription tracking
-            try createContractSnapshotTables(in: db)
 
             // Migration 17: Create lv_daily_cashflow table for LV settlement data
             try createLVSettlementSchema(db)
@@ -1872,7 +1790,14 @@ class PowstonDataStore: ObservableObject {
                 try db.execute(sql: "DELETE FROM sync_metadata")
                 try db.execute(sql: "DELETE FROM analysis_cache")
                 try db.execute(sql: "DELETE FROM meter_records")
-                try db.execute(sql: "DELETE FROM p2p_trade_records")
+                // Orphaned tables from the removed P2P feature (pre-Aug 2026
+                // installs) — no code reads them any more, so drop outright
+                for table in ["p2p_trade_records", "p2p_contracts", "p2p_counterparty_trades",
+                              "p2p_counterparty_locations", "lv_interval_trades",
+                              "lv_market_contracts", "lv_orders",
+                              "lv_contract_snapshots", "lv_counterparty_snapshots"] {
+                    try db.execute(sql: "DROP TABLE IF EXISTS \(table)")
+                }
             }
             updateRecordCount()
             lastSyncTime = nil

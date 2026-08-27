@@ -19,11 +19,6 @@ struct TrainingParameters: Codable {
     var defaultExport: Int?
     var importFactor: Int?
 
-    // P2P Export settings
-    var p2pExportPower: Int?      // Watts (0 = disabled)
-    var p2pExportStartHour: Int?  // Hour to start P2P export (0-23)
-    var p2pExportEndHour: Int?    // Hour to end P2P export (0-23)
-
     enum CodingKeys: String, CodingKey {
         case minSoc = "min_soc"
         case maxSoc = "max_soc"
@@ -33,9 +28,6 @@ struct TrainingParameters: Codable {
         case alwaysImportSoc = "ALWAYS_IMPORT_SOC"
         case defaultExport = "DEFAULT_EXPORT"
         case importFactor = "IMPORT_FACTOR"
-        case p2pExportPower = "P2P_EXPORT_POWER"
-        case p2pExportStartHour = "P2P_EXPORT_START_HOUR"
-        case p2pExportEndHour = "P2P_EXPORT_END_HOUR"
     }
 
     /// Create empty parameters
@@ -48,10 +40,7 @@ struct TrainingParameters: Codable {
             batterySocAc: nil,
             alwaysImportSoc: nil,
             defaultExport: nil,
-            importFactor: nil,
-            p2pExportPower: nil,
-            p2pExportStartHour: nil,
-            p2pExportEndHour: nil
+            importFactor: nil
         )
     }
 }

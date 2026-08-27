@@ -74,7 +74,12 @@ struct PricesView: View {
                                 .accessibilityElement(children: .ignore)
                                 .accessibilityLabel("Spread: \(PriceFormatter.format((d.buyPrice ?? 0) - (d.sellPrice ?? 0)))")
                             }
-                            
+
+                            // Amber Electric (direct API) — shown when the site has Amber configured
+                            if !api.isDemoMode && AmberService.shared.isConfigured(for: api.selectedSite) {
+                                AmberPriceSection()
+                            }
+
                             // Combined Price Forecast
                             if let buyForecast = d.buyForecast, let sellForecast = d.sellForecast,
                                !buyForecast.isEmpty || !sellForecast.isEmpty {
@@ -148,6 +153,11 @@ struct PricesView: View {
                                 }
                             }
                             
+                            // Amber usage summary
+                            if !api.isDemoMode && AmberService.shared.isConfigured(for: api.selectedSite) {
+                                AmberUsageCard()
+                            }
+
                             // Time Markers
                             if d.sunriseHour != nil || d.peakStartHour != nil {
                                 Section("Time Markers") {

@@ -181,6 +181,7 @@ extension PowstonAPI {
             sitesToFetch = sites
         }
         
+        var anyFetchFailed = false
         for site in sitesToFetch {
             let url = URL(string: "\(baseURL)/api/inverters/\(site.id)")!
             var request = URLRequest(url: url)
@@ -190,6 +191,7 @@ extension PowstonAPI {
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                     print("⚠️ Site \(site.id) (\(site.displayName ?? site.name)): HTTP error")
+                    anyFetchFailed = true
                     continue
                 }
                 let decoded = try JSONDecoder().decode([Inverter].self, from: data)
@@ -197,13 +199,23 @@ extension PowstonAPI {
                 print("✅ Site \(site.id) (\(site.displayName ?? site.name)): \(decoded.count) inverters")
             } catch {
                 print("❌ Failed to fetch inverters for site \(site.id): \(error)")
+                anyFetchFailed = true
             }
         }
         
         await MainActor.run {
             withTransaction(Transaction(animation: nil)) {
                 self.inverters = allInverters
-                if self.selectedInverterId == 0, let first = allInverters.first {
+                // Reset selection if unset OR pointing at an inverter that no longer
+                // exists (e.g. replaced hardware — the old ID can keep answering the
+                // API with stale telemetry forever)
+                // Don't second-guess the selection when a site fetch failed — the
+                // selected inverter may just be missing from a partial list
+                let selectionIsValid = allInverters.contains { $0.id == self.selectedInverterId }
+                if !selectionIsValid, !anyFetchFailed, let first = allInverters.first {
+                    if self.selectedInverterId != 0 {
+                        print("⚠️ Selected inverter \(self.selectedInverterId) no longer exists — switching to \(first.id)")
+                    }
                     self.selectedInverterId = first.id
                 }
                 self.isLoading = false

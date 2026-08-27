@@ -114,12 +114,12 @@ Toggle `demo_mode_enabled` in Settings for testing without API calls.
 
 ## Current Development Focus
 
-### Active Features (as of Feb 2026)
+### Active Features (as of Aug 2026)
 - **Profit Intelligence Hub** - Peak Export Analysis, Decision Efficiency tracking, Export Replacement analysis
-- **Counterparty Tracking** - P2P trading identification, smart business name classification, manual overrides
-- **LocalVolts API Monitoring** - Schema change detection, version tracking
+- **Amber Electric integration** - Direct Amber API (prices/forecasts/usage); key auto-sourced from Powston site `amber_key`, manual override in Settings (app-group UserDefaults, not Keychain)
 
 ### Recent Completions
+- **P2P feature removal (Aug 2026)** — all P2P trading UI/analysis and the LV trading layer (orders, market overview, counterparties, contract snapshots) deleted. LV retailer core kept: credentials, settlement/cashflow sync, history gap-fill, retailer comparison. Orphaned SQLite tables (p2p_*, lv_orders, lv_market_contracts, lv_interval_trades, lv_*_snapshots) are left in place but no longer created or read.
 - App Store naming resolved: "Energy Controller for Powston"
 - Apple Watch standalone support
 - Live Activities and Dynamic Island integration
@@ -136,19 +136,20 @@ Toggle `demo_mode_enabled` in Settings for testing without API calls.
 - Different endpoints (`day_rates` vs `tariff_rates` vs `meter_records`) can return inconsistent data
 - Always verify which endpoint is authoritative for the specific use case
 
-### LocalVolts Integration
-- **No CSV export**: LocalVolts does not provide CSV export of any kind
-- **No historical API**: Trade information is NOT available through their API (new API version with trade features coming soon - Joe Maisano, Feb 2026)
-- **WebSocket only returns today**: The Socket.IO identity response only contains current day's P2P trades
-- **Historical data**: Only available through the web portal (would require screen scraping)
-- **Date convention**: LocalVolts WebSocket APIs return actual trading dates, NOT settlement dates (T+1). Use dates as-is without adjustment. This applies to both Identity response (QtyReport) and ContractTable.
+### LocalVolts Integration (retailer core only — P2P trading code removed Aug 2026)
+- Rick no longer has LV access (switched to Amber July 2026); LV code retained for other sites (e.g. site 1) — leave it alone
+- **Settlement only**: the Socket.IO client now parses only settlement data (Identity + QtyReport); trade/order/market parsing was removed with the P2P feature
 - **Timezone**: Always AEST (Australia/Brisbane, UTC+10) - same as AEMO
 - **Protocol**: Socket.IO v2 (EIO=3) with `suffix=` query parameter required for identification
-- **Matching priority** (confirmed by Joe Maisano): 1) Buyer preferences, 2) Price at buyer's location, 3) Trade placement time. NO pro-rata matching.
-- **No penalties** for missing trades — settlement is on actual meter data, not contracted amounts. Forward amounts adjusted as new forecasts arrive.
-- **Location pricing**: Individual price calculated per site based on grid location (load, generation capacity in area), not just distance.
-- **Trade booking**: Can book up until the start of the interval (e.g. at 15:22 for the 15:25 interval).
-- **Cross-state**: Trades can match across state borders with adjusted pricing, but won't settle if interconnector is constrained in trade direction at settlement time.
+- **Date convention**: LocalVolts WebSocket APIs return actual trading dates, NOT settlement dates (T+1). Use dates as-is.
+
+### Amber Electric Integration
+- Base URL `https://api.amber.com.au/v1`, Bearer token. OpenAPI spec at `https://app.amber.com.au/swagger.json`
+- Endpoints: `/sites`, `/sites/{id}/prices`, `/sites/{id}/prices/current?next=N&resolution=5|30`, `/sites/{id}/usage?startDate&endDate`
+- Prices in c/kWh incl. GST; feedIn perKwh is NEGATIVE when you are paid — display abs()
+- Usage `kwh` negative for generation; `cost` in cents, negative = earnings; `quality` estimated|billable (finalized ~T+1)
+- Key sources: Powston site `amber_key`/`amber_site_id` (auto), or manual override in `amber_api_key` (app-group UserDefaults; deliberately NOT Keychain)
+- Rick's Amber site: 5-min billing intervals, channels E1 (general) + B1 (feedIn), network Energex, active from 2026-07-02
 
 ### Timezone Handling
 - Use `Australia/Sydney` for NSW users, `Australia/Brisbane` for QLD
@@ -166,10 +167,9 @@ Toggle `demo_mode_enabled` in Settings for testing without API calls.
 - Location: Sunshine Coast, Queensland
 
 ## Key Insights
-- **P2P matching is price-competitive**: Matching priority is buyer preferences → price at buyer location → trade placement time. Price matters — there is NO equal/pro-rata allocation (confirmed by Joe Maisano, LV owner, Feb 2026)
-- **No penalty for missing P2P trades**: Settlement is on actual meter data. You can never buy more than you need or sell more than you generate. Forward amounts auto-adjust with new forecasts.
 - **100% charge remains optimal** in current price environment despite occasional losing trades
 - Battery management script uses 15-level priority system (P100 emergency drain → P1 default auto)
+- Powston API `sites` response now includes `active_retailer` ("amber" | "localvolts" | ...), `amber_key`, `amber_site_id`, `subscription_status`, `control_state`, EV charger fields — the app's Site model decodes the retailer/amber fields
 
 ## Working With This Codebase
 - Validate algorithms in Python first, then port to Swift

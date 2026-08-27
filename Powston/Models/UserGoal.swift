@@ -54,8 +54,6 @@ extension UserGoal {
         case (.maximizeRevenue, .exportTiming): return 0.9
         case (.maximizeRevenue, .importTiming): return 0.6
         case (.maximizeRevenue, .batteryReserve): return 0.3
-        case (.maximizeRevenue, .p2pPricing): return 0.7
-        case (.maximizeRevenue, .p2pWindow): return 0.6
         case (.maximizeRevenue, .priceResponse): return 0.8
 
         // Balanced — weight all strategies roughly equally
@@ -63,8 +61,6 @@ extension UserGoal {
         case (.balanced, .exportTiming): return 0.7
         case (.balanced, .importTiming): return 0.7
         case (.balanced, .batteryReserve): return 0.6
-        case (.balanced, .p2pPricing): return 0.5
-        case (.balanced, .p2pWindow): return 0.5
         case (.balanced, .priceResponse): return 0.7
         }
     }

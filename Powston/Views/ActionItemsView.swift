@@ -12,7 +12,6 @@ struct ActionItemsView: View {
     @EnvironmentObject var api: PowstonAPI
     @ObservedObject private var engine = ActionItemsEngine.shared
     @AppStorage("optimization_goal") private var optimizationGoalRaw: String = "balanced"
-    @AppStorage("p2p_enabled_in_action_items") private var p2pEnabled: Bool = false
 
     private var goal: UserGoal {
         UserGoal(from: optimizationGoalRaw)
@@ -97,7 +96,7 @@ struct ActionItemsView: View {
             Spacer()
 
             if let result = engine.result, !result.items.isEmpty {
-                let displayItems = p2pEnabled ? result.items : result.coreItems
+                let displayItems = result.items
                 let displayImpact = engine.calculateCombinedImpact(displayItems)
                 VStack(alignment: .trailing, spacing: 2) {
                     Text("~$\(Int(displayImpact))/mo")
@@ -141,7 +140,7 @@ struct ActionItemsView: View {
 
     @ViewBuilder
     private func actionItemsContent(_ result: ActionItemsResult) -> some View {
-        // Core strategies (non-P2P) grouped by priority
+        // Strategies grouped by priority
         if !result.highPriority.isEmpty {
             prioritySection(
                 title: "High Priority",
@@ -167,11 +166,6 @@ struct ActionItemsView: View {
                 color: .green,
                 items: result.lowPriority
             )
-        }
-
-        // P2P as a separate additive section with toggle
-        if !result.p2pItems.isEmpty {
-            p2pSection(result.p2pItems)
         }
 
         // Combined impact footer
@@ -200,50 +194,10 @@ struct ActionItemsView: View {
         }
     }
 
-    // MARK: - P2P Section
-
-    private func p2pSection(_ items: [ActionItem]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header with toggle
-            HStack(spacing: 8) {
-                Image(systemName: "person.2.fill")
-                    .foregroundStyle(.purple)
-                Text("P2P Trading")
-                    .font(.headline)
-                Spacer()
-                Toggle("", isOn: $p2pEnabled)
-                    .labelsHidden()
-                    .tint(.purple)
-            }
-
-            if p2pEnabled {
-                Text("Sell directly to other energy users via LocalVolts. This is additive revenue on top of your existing spot market earnings.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                ForEach(items) { item in
-                    ActionItemCard(item: item)
-                }
-            } else {
-                Text("Enable to see P2P trading opportunities. P2P is additive — it doesn't change your existing strategy.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding()
-        .background(Color.purple.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.purple.opacity(0.2), lineWidth: 1)
-        )
-    }
-
     // MARK: - Impact Summary
 
     private func impactSummary(_ result: ActionItemsResult) -> some View {
-        // Only include P2P in impact if the user has opted in
-        let itemsForImpact = p2pEnabled ? result.items : result.coreItems
+        let itemsForImpact = result.items
         let breakdown = engine.calculateImpactBreakdown(itemsForImpact)
         let combinedImpact = engine.calculateCombinedImpact(itemsForImpact)
 
@@ -284,39 +238,6 @@ struct ActionItemsView: View {
                         alternatives: breakdown.importAlternatives,
                         color: .blue
                     )
-                }
-
-                if p2pEnabled, let p2p = breakdown.p2pOpportunity, p2p.potentialImpact > 0 {
-                    // If P2P replaced export (no bestExportStrategy), show as revenue strategy
-                    // Otherwise show as additive
-                    let replacesExport = breakdown.bestExportStrategy == nil
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 4) {
-                                Text(replacesExport ? "Revenue strategy" : "P2P")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                if !replacesExport {
-                                    Text("(additive)")
-                                        .font(.caption2)
-                                        .foregroundStyle(.purple)
-                                }
-                                if replacesExport && breakdown.exportAlternatives > 0 {
-                                    Text("(\(breakdown.exportAlternatives) spot alt\(breakdown.exportAlternatives == 1 ? "" : "s"))")
-                                        .font(.caption2)
-                                        .foregroundStyle(.tertiary)
-                                }
-                            }
-                            Text(p2p.title)
-                                .font(.caption)
-                                .lineLimit(1)
-                        }
-                        Spacer()
-                        Text("+$\(Int(p2p.potentialImpact))")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundStyle(.purple)
-                    }
                 }
             }
 
@@ -482,7 +403,6 @@ struct ActionItemsDashboardCard: View {
     @EnvironmentObject var api: PowstonAPI
     @ObservedObject private var engine = ActionItemsEngine.shared
     @AppStorage("optimization_goal") private var optimizationGoalRaw: String = "balanced"
-    @AppStorage("p2p_enabled_in_action_items") private var p2pEnabled: Bool = false
 
     private var goal: UserGoal {
         UserGoal(from: optimizationGoalRaw)
@@ -512,7 +432,7 @@ struct ActionItemsDashboardCard: View {
                             .foregroundStyle(.secondary)
                     }
                 } else if let result = engine.result, !result.items.isEmpty {
-                    let displayItems = p2pEnabled ? result.items : result.coreItems
+                    let displayItems = result.items
                     let breakdown = engine.calculateImpactBreakdown(displayItems)
                     let combinedImpact = engine.calculateCombinedImpact(displayItems)
 
@@ -531,13 +451,6 @@ struct ActionItemsDashboardCard: View {
                                 HStack(spacing: 4) {
                                     Circle().fill(Color.blue).frame(width: 6, height: 6)
                                     Text("Import: +$\(Int(import_.potentialImpact))")
-                                        .font(.caption)
-                                }
-                            }
-                            if p2pEnabled, breakdown.hasP2P, let p2p = breakdown.p2pOpportunity {
-                                HStack(spacing: 4) {
-                                    Circle().fill(Color.purple).frame(width: 6, height: 6)
-                                    Text("P2P: +$\(Int(p2p.potentialImpact))")
                                         .font(.caption)
                                 }
                             }

@@ -64,6 +64,7 @@ struct Site: Codable, Identifiable {
     let amberSiteId: String?
     let localvoltsKey: String?
     let localvoltsPartnerId: String?
+    let activeRetailer: String?
     let marketCosts: Double?
 
     enum CodingKeys: String, CodingKey {
@@ -91,6 +92,7 @@ struct Site: Codable, Identifiable {
         case amberSiteId = "amber_site_id"
         case localvoltsKey = "localvolts_key"
         case localvoltsPartnerId = "localvolts_partner_id"
+        case activeRetailer = "active_retailer"
         case marketCosts = "market_costs"
     }
 

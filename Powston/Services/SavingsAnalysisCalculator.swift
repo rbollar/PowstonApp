@@ -30,20 +30,6 @@ struct SavingsAnalysis {
     // Data quality indicator
     let usedDerivedData: Bool
     
-    // P2P trading (from imported LocalVolts data)
-    // P2P premium is NOT included in Powston API earnings — it is added by the calculator
-    let p2pRevenue: Double         // Total P2P revenue
-    let p2pSpotEquivalent: Double  // What P2P kWh would have earned at spot rates
-    let p2pPremium: Double         // p2pRevenue - p2pSpotEquivalent (can be negative)
-
-    // Separate P2P sell and buy for memo lines
-    let p2pSellRevenue: Double           // Revenue from P2P selling
-    let p2pSellKwh: Double               // Volume sold via P2P
-    let p2pSellSpotEquivalent: Double    // What sell kWh would have earned at spot
-    let p2pBuyCost: Double               // Cost from P2P buying
-    let p2pBuyKwh: Double                // Volume bought via P2P
-    let p2pBuySpotEquivalent: Double     // What buy kWh would have cost at spot
-    let p2pNTB: Double                   // NTB (Needed to Balance) — DLF/MLF adjustment
     let powstonAPINetCost: Double?       // Original Powston API net cost (before LV override), nil if not available
 
     // Derived savings (each tier measures incremental value)
@@ -53,13 +39,6 @@ struct SavingsAnalysis {
     var totalSavings: Double { gridOnlyCost - actualCost }
     var flatRateSavings: Double { flatRateCost - actualCost }
 
-    // P2P helpers
-    var hasP2PData: Bool { p2pRevenue > 0.001 || p2pBuyCost > 0.001 }  // Show if any P2P data exists
-    var hasP2PSellData: Bool { p2pSellRevenue > 0.001 }
-    var hasP2PBuyData: Bool { p2pBuyCost > 0.001 }
-    var p2pSellPremium: Double { p2pSellRevenue - p2pSellSpotEquivalent }
-    var p2pBuySavings: Double { p2pBuySpotEquivalent - p2pBuyCost }  // Positive if bought cheaper than spot
-
     /// Return a copy with actualCost overridden (e.g., from LV settlement data)
     func withActualCost(_ newActualCost: Double) -> SavingsAnalysis {
         SavingsAnalysis(
@@ -68,12 +47,7 @@ struct SavingsAnalysis {
             supplyCost: supplyCost, hasCompleteData: hasCompleteData,
             dataCompleteness: dataCompleteness, flatRateCost: flatRateCost,
             flatBuyRate: flatBuyRate, flatSellRate: flatSellRate,
-            usedDerivedData: usedDerivedData, p2pRevenue: p2pRevenue,
-            p2pSpotEquivalent: p2pSpotEquivalent, p2pPremium: p2pPremium,
-            p2pSellRevenue: p2pSellRevenue, p2pSellKwh: p2pSellKwh,
-            p2pSellSpotEquivalent: p2pSellSpotEquivalent,
-            p2pBuyCost: p2pBuyCost, p2pBuyKwh: p2pBuyKwh,
-            p2pBuySpotEquivalent: p2pBuySpotEquivalent, p2pNTB: p2pNTB,
+            usedDerivedData: usedDerivedData,
             powstonAPINetCost: powstonAPINetCost  // Keep original Powston API value
         )
     }
@@ -93,14 +67,6 @@ struct SavingsAnalysisCalculator {
     ///   - flatBuyRate: Flat tariff buy rate for comparison (c/kWh)
     ///   - flatSellRate: Flat tariff sell rate for comparison (c/kWh)
     ///   - inverterLimitKw: Max inverter power (used for dumb battery simulation)
-    ///   - p2pRevenue: P2P revenue for the period (NOT included in Powston API earnings)
-    ///   - p2pSpotEquivalent: What P2P kWh would have earned at spot
-    ///   - p2pSellRevenue: Revenue from P2P selling
-    ///   - p2pSellKwh: Volume sold via P2P
-    ///   - p2pSellSpotEquivalent: What sell kWh would have earned at spot
-    ///   - p2pBuyCost: Cost from P2P buying
-    ///   - p2pBuyKwh: Volume bought via P2P
-    ///   - p2pBuySpotEquivalent: What buy kWh would have cost at spot
     /// - Returns: SavingsAnalysis if sufficient data, nil otherwise
     func calculate(
             records: [MeterRecord],
@@ -111,16 +77,7 @@ struct SavingsAnalysisCalculator {
             totalExportKwh: Double,
             flatBuyRate: Double = 33.0,
             flatSellRate: Double = 5.0,
-            inverterLimitKw: Double = 10.0,
-            p2pRevenue: Double = 0,
-            p2pSpotEquivalent: Double = 0,
-            p2pSellRevenue: Double = 0,
-            p2pSellKwh: Double = 0,
-            p2pSellSpotEquivalent: Double = 0,
-            p2pBuyCost: Double = 0,
-            p2pBuyKwh: Double = 0,
-            p2pBuySpotEquivalent: Double = 0,
-            p2pNTB: Double = 0
+            inverterLimitKw: Double = 10.0
         ) -> SavingsAnalysis? {
 
         guard !records.isEmpty else { return nil }
@@ -268,12 +225,6 @@ struct SavingsAnalysisCalculator {
             }
         }
 
-        // P2P premium is NOT included in Powston API earnings — add it here
-        // P2P values are in dollars, actualNet is in cents, so convert
-        let p2pSellPremiumCents = (p2pSellRevenue - p2pSellSpotEquivalent) * 100
-        let p2pBuySavingsCents = (p2pBuySpotEquivalent - p2pBuyCost) * 100
-        actualNet += p2pSellPremiumCents + p2pBuySavingsCents
-
         print("   price lookups: \(priceHits) hits, \(priceMisses) misses")
 
         // Convert cents to dollars (net values: positive = credit, negative = cost)
@@ -302,16 +253,6 @@ struct SavingsAnalysisCalculator {
             flatBuyRate: flatBuyRate,
             flatSellRate: flatSellRate,
             usedDerivedData: usedDerivedData,
-            p2pRevenue: p2pRevenue,
-            p2pSpotEquivalent: p2pSpotEquivalent,
-            p2pPremium: p2pRevenue - p2pSpotEquivalent,
-            p2pSellRevenue: p2pSellRevenue,
-            p2pSellKwh: p2pSellKwh,
-            p2pSellSpotEquivalent: p2pSellSpotEquivalent,
-            p2pBuyCost: p2pBuyCost,
-            p2pBuyKwh: p2pBuyKwh,
-            p2pBuySpotEquivalent: p2pBuySpotEquivalent,
-            p2pNTB: p2pNTB,
             powstonAPINetCost: nil
         )
     }
@@ -328,16 +269,7 @@ struct SavingsAnalysisCalculator {
             actualNetFromAPI: Double,
             flatBuyRate: Double = 33.0,
             flatSellRate: Double = 5.0,
-            inverterLimitKw: Double = 10.0,
-            p2pRevenue: Double = 0,
-            p2pSpotEquivalent: Double = 0,
-            p2pSellRevenue: Double = 0,
-            p2pSellKwh: Double = 0,
-            p2pSellSpotEquivalent: Double = 0,
-            p2pBuyCost: Double = 0,
-            p2pBuyKwh: Double = 0,
-            p2pBuySpotEquivalent: Double = 0,
-            p2pNTB: Double = 0
+            inverterLimitKw: Double = 10.0
         ) -> SavingsAnalysis? {
 
             guard let analysis = calculate(
@@ -349,23 +281,12 @@ struct SavingsAnalysisCalculator {
                         totalExportKwh: totalExportKwh,
                         flatBuyRate: flatBuyRate,
                         flatSellRate: flatSellRate,
-                        inverterLimitKw: inverterLimitKw,
-                        p2pRevenue: p2pRevenue,
-                        p2pSpotEquivalent: p2pSpotEquivalent,
-                        p2pSellRevenue: p2pSellRevenue,
-                        p2pSellKwh: p2pSellKwh,
-                        p2pSellSpotEquivalent: p2pSellSpotEquivalent,
-                        p2pBuyCost: p2pBuyCost,
-                        p2pBuyKwh: p2pBuyKwh,
-                        p2pBuySpotEquivalent: p2pBuySpotEquivalent,
-                        p2pNTB: p2pNTB
+                        inverterLimitKw: inverterLimitKw
                     ) else { return nil }
 
         // actualNetFromAPI is net profit (earnings - costs) including supply
         // Convert to cost: negative of net profit
-        // P2P premium is NOT included in Powston API earnings — adjust here
-        let p2pAdjustment = (p2pSellRevenue - p2pSellSpotEquivalent) + (p2pBuySpotEquivalent - p2pBuyCost)
-        let actualCostFromAPI = -actualNetFromAPI - p2pAdjustment
+        let actualCostFromAPI = -actualNetFromAPI
 
         return SavingsAnalysis(
             gridOnlyCost: analysis.gridOnlyCost,
@@ -379,16 +300,6 @@ struct SavingsAnalysisCalculator {
             flatBuyRate: flatBuyRate,
             flatSellRate: flatSellRate,
             usedDerivedData: analysis.usedDerivedData,
-            p2pRevenue: p2pRevenue,
-            p2pSpotEquivalent: p2pSpotEquivalent,
-            p2pPremium: p2pRevenue - p2pSpotEquivalent,
-            p2pSellRevenue: p2pSellRevenue,
-            p2pSellKwh: p2pSellKwh,
-            p2pSellSpotEquivalent: p2pSellSpotEquivalent,
-            p2pBuyCost: p2pBuyCost,
-            p2pBuyKwh: p2pBuyKwh,
-            p2pBuySpotEquivalent: p2pBuySpotEquivalent,
-            p2pNTB: p2pNTB,
             powstonAPINetCost: -actualNetFromAPI  // Powston API reported net cost (positive=cost, negative=profit)
         )
     }
@@ -517,14 +428,6 @@ struct SavingsAnalysisCalculator {
         let flatRateCostCents = (totalImportKwh * flatBuyRate) - (totalExportKwh * flatSellRate)
         let flatRateTotal = flatRateCostCents / 100.0 + supplyCost
 
-        // P2P from LV settlement: settle IS spot-only, matchAmount IS P2P (separate)
-        let p2pSellRevenue = cashflow.p2pMatchedRevenue
-        let p2pSellKwh = cashflow.energySoldP2PKwh
-        let spotRate = cashflow.energySoldSpotKwh > 0.001 ? cashflow.spotEnergyRevenue / cashflow.energySoldSpotKwh : 0
-        let p2pSellSpotEquivalent = spotRate * cashflow.energySoldP2PKwh
-        let p2pBuyCost = intervals.filter { $0.isImport && $0.matchAmount > 0 }.reduce(0.0) { $0 + $1.matchAmount }
-        let p2pBuyKwh = intervals.filter { $0.isImport && $0.matchEnergy > 0 }.reduce(0.0) { $0 + $1.matchEnergy }
-
         return SavingsAnalysis(
             gridOnlyCost: gridOnlyTotal + supplyCost,
             solarOnlyCost: solarOnlyTotal + supplyCost,
@@ -537,16 +440,6 @@ struct SavingsAnalysisCalculator {
             flatBuyRate: flatBuyRate,
             flatSellRate: flatSellRate,
             usedDerivedData: true,  // No inverter data, estimated from grid flows
-            p2pRevenue: p2pSellRevenue,
-            p2pSpotEquivalent: p2pSellSpotEquivalent,
-            p2pPremium: p2pSellRevenue - p2pSellSpotEquivalent,
-            p2pSellRevenue: p2pSellRevenue,
-            p2pSellKwh: p2pSellKwh,
-            p2pSellSpotEquivalent: p2pSellSpotEquivalent,
-            p2pBuyCost: p2pBuyCost,
-            p2pBuyKwh: p2pBuyKwh,
-            p2pBuySpotEquivalent: 0,
-            p2pNTB: 0,
             powstonAPINetCost: nil
         )
     }

@@ -4,3 +4,8 @@ build/
 *.working
 *.before_add_files
 *.localvolts_attempt
+amber.key
+*.key
+DeepSixWatch*/
+p2p_trader.py
+lvclient.py

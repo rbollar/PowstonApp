@@ -3,7 +3,7 @@
 //  Powston
 //
 //  Unified action item model for consolidating recommendations
-//  from Scorecard, Peak Analysis, Bargain Hunter, Peer Power, and Decision Efficiency
+//  from Scorecard, Peak Analysis, Bargain Hunter, and Decision Efficiency
 //
 
 import Foundation
@@ -69,7 +69,6 @@ enum ActionSource: String, Codable, CaseIterable {
     case scorecard = "Scorecard"
     case peakAnalysis = "Peak Analysis"
     case bargainHunter = "Bargain Hunter"
-    case peerPower = "Peer Power"
     case decisionEfficiency = "Decision Efficiency"
 
     var icon: String {
@@ -77,7 +76,6 @@ enum ActionSource: String, Codable, CaseIterable {
         case .scorecard: return "gauge.with.dots.needle.33percent"
         case .peakAnalysis: return "chart.line.uptrend.xyaxis"
         case .bargainHunter: return "tag.fill"
-        case .peerPower: return "person.2.fill"
         case .decisionEfficiency: return "brain.head.profile"
         }
     }
@@ -87,7 +85,6 @@ enum ActionSource: String, Codable, CaseIterable {
         case .scorecard: return "cyan"
         case .peakAnalysis: return "orange"
         case .bargainHunter: return "green"
-        case .peerPower: return "purple"
         case .decisionEfficiency: return "blue"
         }
     }
@@ -101,8 +98,6 @@ enum ActionCategory: String, Codable, CaseIterable {
     case exportTiming = "Export Timing"
     case importTiming = "Import Timing"
     case batteryReserve = "Battery Reserve"
-    case p2pPricing = "P2P Pricing"
-    case p2pWindow = "P2P Window"
     case priceResponse = "Price Response"
 
     var icon: String {
@@ -111,14 +106,8 @@ enum ActionCategory: String, Codable, CaseIterable {
         case .exportTiming: return "clock.arrow.circlepath"
         case .importTiming: return "clock.badge.checkmark"
         case .batteryReserve: return "battery.75"
-        case .p2pPricing: return "dollarsign.circle"
-        case .p2pWindow: return "calendar.badge.clock"
         case .priceResponse: return "bolt.circle"
         }
-    }
-
-    var isP2P: Bool {
-        self == .p2pPricing || self == .p2pWindow
     }
 }
 
@@ -175,27 +164,18 @@ struct ActionItemsResult: Codable {
         Dictionary(grouping: items) { $0.priority }
     }
 
-    /// Non-P2P items only
     var coreItems: [ActionItem] {
-        items.filter { !$0.category.isP2P }
+        items
     }
 
-    /// P2P items only
-    var p2pItems: [ActionItem] {
-        items.filter { $0.category.isP2P }
-    }
-
-    /// High priority items (excluding P2P)
     var highPriority: [ActionItem] {
         coreItems.filter { $0.priority == .high }
     }
 
-    /// Medium priority items (excluding P2P)
     var mediumPriority: [ActionItem] {
         coreItems.filter { $0.priority == .medium }
     }
 
-    /// Low priority items (excluding P2P)
     var lowPriority: [ActionItem] {
         coreItems.filter { $0.priority == .low }
     }
@@ -207,17 +187,11 @@ struct ActionItemsResult: Codable {
 struct ImpactBreakdown {
     let bestExportStrategy: ActionItem?
     let bestImportStrategy: ActionItem?
-    let p2pOpportunity: ActionItem?
     let exportAlternatives: Int    // Other export strategies not counted
     let importAlternatives: Int    // Other import strategies not counted
 
     var totalRealisticImpact: Double {
         (bestExportStrategy?.potentialImpact ?? 0) +
-        (bestImportStrategy?.potentialImpact ?? 0) +
-        (p2pOpportunity?.potentialImpact ?? 0)
-    }
-
-    var hasP2P: Bool {
-        p2pOpportunity != nil && (p2pOpportunity?.potentialImpact ?? 0) > 0
+        (bestImportStrategy?.potentialImpact ?? 0)
     }
 }

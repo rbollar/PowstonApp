@@ -13,7 +13,6 @@ struct ProfitIntelligenceView: View {
     @StateObject private var efficiencyAnalysis = DecisionEfficiencyAnalysis()
     @StateObject private var savingsAnalysis = SavingsBreakdownAnalysis()
     @StateObject private var bargainHunterAnalysis = BargainHunterAnalysis()
-    @StateObject private var peerPowerAnalysis = PeerPowerAnalysis()
 
     // Background sync state
     @State private var syncState: AnalysisSyncState = .idle
@@ -54,9 +53,6 @@ struct ProfitIntelligenceView: View {
 
                     // Bargain Hunter - enabled
                     bargainHunterCard
-
-                    // Peer Power - enabled
-                    peerPowerCard
 
                     // Retailer Comparison - enabled
                     retailerComparisonCard
@@ -541,105 +537,6 @@ struct ProfitIntelligenceView: View {
         }
     }
     
-    // MARK: - Peer Power Card (enabled)
-    
-    private var peerPowerCard: some View {
-        NavigationLink(destination: PeerPowerView()) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Image(systemName: "person.2.fill")
-                        .font(.title3)
-                        .foregroundColor(.purple)
-                    
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Peer Power")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundColor(.primary)
-                        
-                        Text("Find your optimal P2P trading window")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Spacer()
-                    
-                    Image(systemName: "chevron.right")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
-                // Teaser if results available
-                if let result = peerPowerAnalysis.result {
-                    Text(peerPowerHeadline(result))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    
-                    Divider()
-                    
-                    HStack(spacing: 16) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(Int(result.recommendation.offerPrice))¢")
-                                .font(.subheadline.bold())
-                                .foregroundColor(.purple)
-                            Text("offer price")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(Int(result.recommendation.dailyKwh)) kWh")
-                                .font(.subheadline.bold())
-                                .foregroundColor(.purple)
-                            Text("per day")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("+\(formatCurrency(result.recommendation.monthlyExtraRevenue))")
-                                .font(.subheadline.bold())
-                                .foregroundColor(.green)
-                            Text("per month")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                    }
-                } else if !api.isDemoMode {
-                    Divider()
-                    
-                    HStack {
-                        Image(systemName: "play.circle.fill")
-                            .foregroundColor(.purple)
-                        Text("Analyze 60 days of peak export data")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                    }
-                }
-            }
-            .padding()
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
-        }
-        .buttonStyle(.plain)
-        .disabled(api.isDemoMode)
-        .opacity(api.isDemoMode ? 0.6 : 1)
-    }
-    
-    private func peerPowerHeadline(_ result: PeerPowerResult) -> String {
-        let rec = result.recommendation
-        let window = "\(formatHourShort(rec.startHour))–\(formatHourShort(rec.endHour))"
-        return "\(Int(rec.offerPrice))¢ for \(Int(rec.dailyKwh)) kWh/day \(window)"
-    }
-    
-    private func formatHourShort(_ hour: Int) -> String {
-        let h = hour % 12 == 0 ? 12 : hour % 12
-        return "\(h)\(hour < 12 ? "a" : "p")"
-    }
-
     // MARK: - Retailer Comparison Card
 
     private var retailerComparisonCard: some View {
@@ -774,11 +671,6 @@ struct ProfitIntelligenceView: View {
                 bargainHunterAnalysis.result = cached
             }
             
-            // Load Peer Power cached result
-            if let cached = peerPowerAnalysis.getCachedResult(config: config) {
-                peerPowerAnalysis.result = cached
-            }
-
         }
     }
 
