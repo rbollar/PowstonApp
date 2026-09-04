@@ -40,5 +40,8 @@
       "Bash(cd:*)",
       "Bash(plutil:*)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "cognee"
+  ]
 }

@@ -18,6 +18,7 @@ struct AmberSetupView: View {
     @State private var manualKey: String = ""
     @State private var testResult: TestResult?
     @State private var isTesting = false
+    @State private var isSavingToPowston = false
 
     enum TestResult {
         case success(String)
@@ -66,6 +67,23 @@ struct AmberSetupView: View {
                     }
                 }
                 .disabled(isTesting || (manualKey.isEmpty && effectiveKey == nil))
+
+                if hasManualKey, powstonProvidedKey == nil {
+                    Button {
+                        saveKeyToPowston()
+                    } label: {
+                        HStack {
+                            if isSavingToPowston { ProgressView().scaleEffect(0.8) }
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Save Key to Powston")
+                                Text("Powston stores the key on your site and shares it with all your devices.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .disabled(isSavingToPowston)
+                }
 
                 if hasManualKey {
                     Button(role: .destructive) {
@@ -151,6 +169,26 @@ struct AmberSetupView: View {
                 testResult = .failure(error.localizedDescription)
             }
             isTesting = false
+        }
+    }
+
+    private func saveKeyToPowston() {
+        guard let siteId = api.selectedSite?.id,
+              let key = amber.manualKey(forPowstonSite: siteId) else { return }
+
+        isSavingToPowston = true
+        testResult = nil
+        Task {
+            let result = await api.saveAmberKeyToPowston(siteId: siteId, amberApiKey: key)
+            switch result {
+            case .success(let response) where response.saved:
+                testResult = .success("Saved to Powston — all your devices will now use this key.")
+            case .success(let response):
+                testResult = .failure(response.message)
+            case .failure(let error):
+                testResult = .failure(error.localizedDescription)
+            }
+            isSavingToPowston = false
         }
     }
 

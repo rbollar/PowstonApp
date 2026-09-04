@@ -132,6 +132,60 @@ extension PowstonAPI {
         }
     }
     
+    // MARK: - Save Amber Key
+
+    struct AmberKeySaveResult: Codable {
+        let valid: Bool
+        let saved: Bool
+        let siteId: Int
+        let amberSiteId: String
+        let nmi: String?
+        let message: String
+
+        enum CodingKeys: String, CodingKey {
+            case valid, saved, nmi, message
+            case siteId = "site_id"
+            case amberSiteId = "amber_site_id"
+        }
+    }
+
+    /// Validate an Amber API key with Powston and save it on the site
+    /// (POST /api/site/{site_id}/amber-key). Once saved, Powston distributes
+    /// the key to all devices via the site's amber_key field.
+    func saveAmberKeyToPowston(siteId: Int, amberApiKey: String) async -> Result<AmberKeySaveResult, Error> {
+        guard !apiKey.isEmpty else {
+            return .failure(NSError(domain: "PowstonAPI", code: 401, userInfo: [NSLocalizedDescriptionKey: "Not authenticated"]))
+        }
+
+        let url = URL(string: "\(baseURL)/api/site/\(siteId)/amber-key")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["api_key": amberApiKey])
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let http = response as? HTTPURLResponse else {
+                return .failure(NSError(domain: "PowstonAPI", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid response"]))
+            }
+
+            if http.statusCode == 200 {
+                let result = try JSONDecoder().decode(AmberKeySaveResult.self, from: data)
+                if result.saved {
+                    await fetchSites()  // pick up the new amber_key/amber_site_id
+                }
+                return .success(result)
+            } else {
+                let message = String(data: data, encoding: .utf8) ?? "Unknown error"
+                return .failure(NSError(domain: "PowstonAPI", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: message]))
+            }
+        } catch {
+            return .failure(error)
+        }
+    }
+
     // MARK: - Fetch Inverters
     
     func fetchInverters(siteId: Int) async {

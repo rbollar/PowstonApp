@@ -24,7 +24,8 @@ extension PowstonAPI {
         maxSellPrice: Double? = nil,
         exportLimit: Bool = false,
         startTime: Date? = nil,
-        endTime: Date? = nil
+        endTime: Date? = nil,
+        actionParams: [String: Double] = [:]
     ) async -> Bool {
         let url = URL(string: "\(baseURL)/api/set_manual_action/\(inverterId)")!
         var request = URLRequest(url: url)
@@ -41,7 +42,8 @@ extension PowstonAPI {
             "max_buy_price": maxBuyPrice.map { $0 as Any } ?? NSNull(),
             "min_soc": minSoc.map { $0 as Any } ?? NSNull(),
             "max_soc": maxSoc.map { $0 as Any } ?? NSNull(),
-            "exportLimit": exportLimit
+            "exportLimit": exportLimit,
+            "action_params": actionParams
         ]
         
         if let start = startTime, let end = endTime {
@@ -86,6 +88,36 @@ extension PowstonAPI {
         }
     }
     
+    // MARK: - Action Params Metadata
+
+    /// Fetch the action_params supported for an inverter brand
+    /// (GET /api/action_params/metadata/{brand}). Cached per brand.
+    func fetchActionParamsMetadata(brand: String) async -> ActionParamsMetadata? {
+        let key = brand.lowercased()
+        if let cached = actionParamsMetadataCache[key] { return cached }
+
+        guard let encoded = key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "\(baseURL)/api/action_params/metadata/\(encoded)") else {
+            return nil
+        }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                print("❌ action_params metadata fetch failed for \(brand)")
+                return nil
+            }
+            let metadata = try JSONDecoder().decode(ActionParamsMetadata.self, from: data)
+            await MainActor.run { self.actionParamsMetadataCache[key] = metadata }
+            return metadata
+        } catch {
+            print("❌ action_params metadata error: \(error)")
+            return nil
+        }
+    }
+
     // MARK: - End Manual Action
     
     func endManualAction(actionId: Int) async -> Bool {

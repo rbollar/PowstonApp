@@ -21,6 +21,9 @@ struct ManualOverrideView: View {
     @State private var maxSellPrice: Double = 50
     @State private var minSoc: Double = 10
     @State private var maxSoc: Double = 100
+    @State private var addPowerLimits = false
+    @State private var actionParamsMetadata: ActionParamsMetadata?
+    @State private var paramInputs: [String: String] = [:]
     @State private var notes: String = ""
     @State private var acceptedResponsibility = false
     @State private var showingConfirmation = false
@@ -279,9 +282,9 @@ struct ManualOverrideView: View {
                     Text("Duration")
                 }
                 
-                // Price Constraints
+                // Bailout Rules (price + SOC)
                 Section {
-                    Toggle("Add Price Constraints", isOn: $addPriceConstraints)
+                    Toggle("Price Bailout", isOn: $addPriceConstraints)
                     
                     if addPriceConstraints {
                         VStack(alignment: .leading, spacing: 16) {
@@ -325,18 +328,9 @@ struct ManualOverrideView: View {
                         }
                         .padding(.vertical, 8)
                     }
-                } header: {
-                    Text("Price Constraints")
-                } footer: {
-                    if addPriceConstraints {
-                        Text("Override will only apply when prices are within these ranges")
-                    }
-                }
-                
-                // SOC Constraints
-                Section {
-                    Toggle("Add Battery SOC Constraints", isOn: $addSocConstraints)
-                    
+
+                    Toggle("Battery SOC Bailout", isOn: $addSocConstraints)
+
                     if addSocConstraints {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
@@ -365,9 +359,57 @@ struct ManualOverrideView: View {
                         .padding(.vertical, 8)
                     }
                 } header: {
-                    Text("SOC Constraints")
+                    Text("Bailout Rules")
+                } footer: {
+                    if addPriceConstraints || addSocConstraints {
+                        Text("The override only runs while these conditions hold. If price or battery SOC moves outside the range, Powston bails out and returns the inverter to automatic control.")
+                    }
                 }
-                
+
+                // Power Limits (brand-specific action_params)
+                if let metadata = actionParamsMetadata, !metadata.overrideFields.isEmpty {
+                    Section {
+                        Toggle("Set Power Limits", isOn: $addPowerLimits)
+
+                        if addPowerLimits {
+                            ForEach(metadata.overrideFields) { field in
+                                HStack(alignment: .center) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(field.label)
+                                            .font(.subheadline)
+                                        if let description = field.description {
+                                            Text(description)
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    Spacer()
+                                    TextField("—", text: paramBinding(field.key))
+                                        .keyboardType(.decimalPad)
+                                        .multilineTextAlignment(.trailing)
+                                        .frame(width: 80)
+                                    if let unit = field.unit {
+                                        Text(unit)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                                if let problem = validationProblem(for: field) {
+                                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                                        .font(.caption)
+                                        .foregroundColor(.red)
+                                }
+                            }
+                        }
+                    } header: {
+                        Text("Power Limits")
+                    } footer: {
+                        if addPowerLimits {
+                            Text("\(metadata.brand.capitalized) settings applied for the duration of the override. Leave a field blank to keep the inverter's current value.")
+                        }
+                    }
+                }
+
                 // Notes - use TextEditor for better performance
                 Section("Reason (Optional)") {
                     TextEditor(text: $notes)
@@ -484,6 +526,11 @@ struct ManualOverrideView: View {
                 await api.refreshActiveOverrides()
                 clearStalePending()
                 await clearStaleLiveActivity()
+
+                // Brand-specific power-limit params for this site's inverters
+                if actionParamsMetadata == nil, let brand = siteInverters.first?.manufacturer {
+                    actionParamsMetadata = await api.fetchActionParamsMetadata(brand: brand)
+                }
 
                 // Debug
                 print("📋 Scheduled overrides: \(api.scheduledOverrides.count)")
@@ -606,7 +653,50 @@ struct ManualOverrideView: View {
         if !acceptedResponsibility { return false }
         if addSocConstraints && minSoc >= maxSoc { return false }
         if siteInverters.isEmpty { return false }
+        if addPowerLimits && hasInvalidPowerLimits { return false }
         return true
+    }
+
+    // MARK: - Power Limit Params
+
+    func paramBinding(_ key: String) -> Binding<String> {
+        Binding(
+            get: { paramInputs[key] ?? "" },
+            set: { paramInputs[key] = $0 }
+        )
+    }
+
+    /// Parsed value for a param field, or nil if blank
+    func paramValue(for field: ActionParamField) -> Double? {
+        guard let text = paramInputs[field.key]?.trimmingCharacters(in: .whitespaces),
+              !text.isEmpty else { return nil }
+        return Double(text)
+    }
+
+    func validationProblem(for field: ActionParamField) -> String? {
+        guard let text = paramInputs[field.key]?.trimmingCharacters(in: .whitespaces),
+              !text.isEmpty else { return nil }
+        guard let value = Double(text) else { return "Not a number" }
+        if let min = field.min, value < min { return "Minimum is \(Int(min))\(field.unit ?? "")" }
+        if let max = field.max, value > max { return "Maximum is \(Int(max))\(field.unit ?? "")" }
+        return nil
+    }
+
+    var hasInvalidPowerLimits: Bool {
+        guard let metadata = actionParamsMetadata else { return false }
+        return metadata.overrideFields.contains { validationProblem(for: $0) != nil }
+    }
+
+    /// The action_params dictionary to send with the override
+    var enteredActionParams: [String: Double] {
+        guard addPowerLimits, let metadata = actionParamsMetadata else { return [:] }
+        var params: [String: Double] = [:]
+        for field in metadata.overrideFields {
+            if let value = paramValue(for: field), validationProblem(for: field) == nil {
+                params[field.key] = value
+            }
+        }
+        return params
     }
     
     func formatDurationLong(_ minutes: Int) -> String {
@@ -702,7 +792,8 @@ struct ManualOverrideView: View {
             let useTimeRangeValue = useTimeRange
             let startTimeValue = startTime
             let endTimeValue = endTime
-            
+            let actionParamsValue = enteredActionParams
+
             Task.detached {
                 _ = await apiRef.setManualOverride(
                     inverterId: inverterId,
@@ -717,7 +808,8 @@ struct ManualOverrideView: View {
                     maxSellPrice: maxSellPriceValue,
                     exportLimit: exportLimitValue,
                     startTime: useTimeRangeValue ? startTimeValue : nil,
-                    endTime: useTimeRangeValue ? endTimeValue : nil
+                    endTime: useTimeRangeValue ? endTimeValue : nil,
+                    actionParams: actionParamsValue
                 )
             }
         }
@@ -901,6 +993,13 @@ struct OverrideRowView: View {
                         .foregroundColor(type.color)
                 }
                 
+                if let params = action.actionParamsSummary {
+                    Text(params)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+
                 if let notes = action.notes, !notes.isEmpty {
                     Text(notes)
                         .font(.caption2)

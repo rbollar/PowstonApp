@@ -33,6 +33,7 @@ class PowstonAPI: ObservableObject {
     @Published var currentOverrides: [ManualAction] = []   // Currently executing (grouped)
     @Published var scheduledOverrides: [ManualAction] = [] // Future start time (grouped)
     internal var allOverrideActions: [ManualAction] = []   // Full list for cancellation/verification
+    internal var actionParamsMetadataCache: [String: ActionParamsMetadata] = [:]  // keyed by brand
     
     // Day Rate Summary Properties
     @Published var latestCompleteDataDate: Date?

@@ -10,6 +10,77 @@ struct ManualActionsResponse: Codable {
     let items: [ManualAction]
 }
 
+// MARK: - Action Params
+
+/// A value inside a manual action's `action_params` dictionary.
+/// The API mixes numbers (power limits, SOC) with strings (reason).
+enum ActionParamValue: Codable, Equatable {
+    case number(Double)
+    case string(String)
+    case bool(Bool)
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let b = try? container.decode(Bool.self) {
+            self = .bool(b)
+        } else if let d = try? container.decode(Double.self) {
+            self = .number(d)
+        } else if let s = try? container.decode(String.self) {
+            self = .string(s)
+        } else {
+            throw DecodingError.typeMismatch(
+                ActionParamValue.self,
+                DecodingError.Context(codingPath: decoder.codingPath,
+                                      debugDescription: "Unsupported action_params value")
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .number(let d): try container.encode(d)
+        case .string(let s): try container.encode(s)
+        case .bool(let b): try container.encode(b)
+        }
+    }
+
+    var numberValue: Double? {
+        if case .number(let d) = self { return d }
+        return nil
+    }
+}
+
+/// One parameter definition from GET /api/action_params/metadata/{brand}
+struct ActionParamField: Codable, Identifiable {
+    let key: String
+    let label: String
+    let type: String           // "number" | "string"
+    let unit: String?
+    let min: Double?
+    let max: Double?
+    let maxLength: Int?
+    let description: String?
+
+    var id: String { key }
+}
+
+/// GET /api/action_params/metadata/{brand} response:
+/// common params plus brand-specific extras
+struct ActionParamsMetadata: Codable {
+    let brand: String
+    let common: [ActionParamField]
+    let extras: [ActionParamField]
+
+    /// Numeric params worth exposing in the override UI. min_soc/max_soc are
+    /// already dedicated bailout fields and `reason` duplicates notes.
+    var overrideFields: [ActionParamField] {
+        (common + extras).filter {
+            $0.type == "number" && !["min_soc", "max_soc", "reason"].contains($0.key)
+        }
+    }
+}
+
 struct ManualAction: Codable, Identifiable {
     let id: Int
     let inverterId: Int
@@ -29,9 +100,34 @@ struct ManualAction: Codable, Identifiable {
     let createdAt: String?
     let userCode: String?
     let time: String?
-    
+    let actionParams: [String: ActionParamValue]?
+
     // Alias for consistency
     var mode: String { action }
+
+    /// Compact human-readable summary of any brand action params, e.g.
+    /// "Charge ≤ 5 kW • Feed-in ≤ 10 kW"
+    var actionParamsSummary: String? {
+        guard let params = actionParams, !params.isEmpty else { return nil }
+        let labels: [String: (String, String)] = [
+            "optimal_charging": ("Charge ≤", "W"),
+            "optimal_discharging": ("Discharge ≤", "W"),
+            "feed_in_power_limitation": ("Feed-in ≤", "W"),
+            "grid_power": ("Grid", "W"),
+            "backup_soc": ("Backup SOC", "%"),
+            "min_soc": ("Min SOC", "%"),
+            "max_soc": ("Max SOC", "%")
+        ]
+        let parts: [String] = params.keys.sorted().compactMap { key in
+            guard let value = params[key]?.numberValue else { return nil }
+            let (label, unit) = labels[key] ?? (key, "")
+            if unit == "W" && abs(value) >= 1000 {
+                return String(format: "%@ %.1f kW", label, value / 1000)
+            }
+            return String(format: "%@ %.0f%@", label, value, unit)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " • ")
+    }
     
     enum CodingKeys: String, CodingKey {
         case id
@@ -52,6 +148,7 @@ struct ManualAction: Codable, Identifiable {
         case createdAt = "created_at"
         case userCode = "user_code"
         case time
+        case actionParams = "action_params"
     }
     
     var isActive: Bool {

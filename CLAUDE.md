@@ -84,13 +84,20 @@ Polling aligned to AEMO's 5-minute dispatch intervals:
 
 Base URL: `https://app.powston.com`
 
+Full OpenAPI spec (authoritative): `https://app.powston.com/api/openapi.json` (no auth needed)
+
 Key endpoints:
 - `GET /api/inverter_params/{inverterId}` - Real-time data
 - `GET /api/sites` - List user's sites
-- `POST /api/manual-actions` - Create override
-- `DELETE /api/manual-actions/{id}` - Cancel override
+- `POST /api/set_manual_action/{inverterId}` - Create override (NewManualAction schema; includes `action_params` dict)
+- `POST /api/manual_action/{id}` - Update override (set `end_time` = now to cancel)
+- `GET /api/manual_actions/{inverterId}` - List overrides
+- `GET /api/action_params/metadata/{brand}` - Brand-specific override params (power limits etc.); `/api/action_params/brands` lists brands
+- `POST /api/site/{site_id}/amber-key` - Validate + save Amber key on the site (AmberApiKeyResponse: valid/saved/amber_site_id/message)
 
-Authentication: Bearer token in Authorization header
+Authentication: Bearer token in Authorization header. Cloudflare blocks non-browser User-Agents (error 1010) — send a browser UA when scripting.
+
+"Bailout rules" on manual actions = the min/max buy/sell price and min/max SOC fields; the override only runs while they hold, otherwise Powston bails out to automatic control. There are no separate bailout_* fields.
 
 ## Important Implementation Details
 
