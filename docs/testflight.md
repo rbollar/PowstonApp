@@ -7,6 +7,8 @@
 
 ## Builds sent (2026-11-13)
 
+- **1.4 (19), 2026-11-14:** for Amber sites, Ask's price forecast continues past Powston's window with Amber's forecast. Rick: "Go ahead." 18 expired while still WAITING_FOR_BETA_REVIEW; 19 is in Internal Testing and submitted for external review (WAITING_FOR_BETA_REVIEW).
+
 - **1.4 (18), 2026-11-14:** Ask lists show bullets, and tonight questions get the 24-hour forecast. Rick: "Yes". 17 expired while still WAITING_FOR_BETA_REVIEW; 18 is in Internal Testing and submitted for external review (WAITING_FOR_BETA_REVIEW).
 
 - **1.4 (17), 2026-11-14:** after 16 showed PCC refusing every request (error 32031). Readable errors, a PCC check after the first failure, and cleaner price wording. Rick: "Make those changes." 16 expired while still WAITING_FOR_BETA_REVIEW; 17 is in Internal Testing and submitted for external review (WAITING_FOR_BETA_REVIEW).
@@ -140,9 +142,9 @@ Rick, 2026-11-13: "Fix the GitHub secret leak."
 
 - Ship the 0xdead10cc fix and see whether background crash reports stop.
 - Test Battery ROI, Controller Health and Amber setup on a device.
-- Try the watch app from build 18 on a watch; it hasn't run from this source before.
+- Try the watch app from build 19 on a watch; it hasn't run from this source before.
 - Apple TV: profile, tvOS ship script, a tvOS build.
 - Watch widgets: an entitlements file with the watch app group.
 - Drop PUSH_LEGACY_SECRET on the push server when 1.2 users have moved to 1.3.
-- Look at Acknowledgements on a device (build 18).
-- Watch build 18's Beta App Review; external testers get it once Apple approves. (14 to 17 were expired before review.)
+- Look at Acknowledgements on a device (build 19).
+- Watch build 19's Beta App Review; external testers get it once Apple approves. (14 to 18 were expired before review.)
