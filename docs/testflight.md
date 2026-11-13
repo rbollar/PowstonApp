@@ -5,6 +5,16 @@
 - **1.3 (11), iPhone: prepared, not uploaded.** It carries the October work (`docs/api-review-2026-10.md`: Amber, Battery ROI, Data Diagnosis, Tuning extras, P2P labels) plus the Debug-only guard below. It goes to **Internal Testing** first, so it can be tried on a device before any external group.
 - Rick, 2026-11-13, on the plan "1.3 (11); commit the October work and send it to Internal Testing only; limit the developer option to debug builds; push secret as its own job; iPhone first; build on the build box after checking with deeplog-01": "I basically agree … Agree with the other decisions."
 
+## Builds sent (2026-11-13)
+
+All builds are 1.3, built on the build box with Xcode 27.1 and answered "no non-exempt encryption". Rick: "Answer it that way."
+- **(11):** the October work. In Internal Testing.
+- **(12):** the rotated push secret. In Internal Testing.
+- **(13):** adds Acknowledgements. In Internal Testing and submitted to **External Testing** (27 testers, public link) for Beta App Review; WAITING_FOR_BETA_REVIEW. Rick: "Make a build 13 and send that to testers."
+  - What to Test: "1.3 adds Amber Electric support alongside Localvolts, a Battery ROI screen (open it from Profit Intelligence), and a Data Diagnosis section in Controller Health. Please check that your retailer shows correctly and that Battery ROI looks right for yesterday, the last 7 days and the last 30 days."
+  - App-level beta review notes: "No account needed: on the Dashboard, tap Try Demo Mode to explore the app with sample data. Controls that change an inverter are off in demo mode."
+- **Ship recipe:** `git archive HEAD` to `admin@10.0.0.2:powston/`, then `Scripts/tf_ship_ios.sh` there, with KEYCHAIN_PW on stdin and `DEVELOPER_DIR=~/xcode-ga/...`. Check with deeplog-01 first, because the box is shared with DeepSix. To release: answer encryption on the build, set `betaBuildLocalizations` whatsNew, add the groups, then POST `betaAppReviewSubmissions`.
+
 ## App Store Connect
 
 - **App:** "Energy Controller for Powston", app id 6757072169, bundle `com.bollar.Powston`, team J56G3UQQLN.
@@ -75,5 +85,5 @@ Rick, 2026-11-13: "Fix the GitHub secret leak."
 - Test Battery ROI, Controller Health and Amber setup on a device.
 - The watch app and Apple TV builds.
 - Drop PUSH_LEGACY_SECRET on the push server when 1.2 users have moved to 1.3.
-- Look at Acknowledgements on a device; it ships in the next build.
-- Submit build 12 to External Testing (Beta App Review) once Rick approves the What to Test and review notes.
+- Look at Acknowledgements on a device (build 13).
+- Watch build 13's Beta App Review; external testers get it once Apple approves.
