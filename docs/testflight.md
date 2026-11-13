@@ -71,8 +71,7 @@ Rick, 2026-11-13: "Fix the GitHub secret leak."
 
 ## Open
 
-- Upload 1.3 (11) from the build box. This needs App Store profiles for `com.bollar.Powston` and `com.bollar.Powston.PowstonWidget`, and box time that doesn't clash with DeepSix 1.1 (review on 2026-11-15).
-- Add the build to Internal Testing; test Battery ROI, Controller Health and Amber setup on a device.
+- Test Battery ROI, Controller Health and Amber setup on a device.
 - The watch app and Apple TV builds.
 - Drop PUSH_LEGACY_SECRET on the push server when 1.2 users have moved to 1.3.
 - Add acknowledgements for the packages (and, if wanted, the GitHub link) to Settings › About.
