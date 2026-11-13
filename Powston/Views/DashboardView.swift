@@ -10,6 +10,8 @@ struct DashboardView: View {
     @EnvironmentObject var api: PowstonAPI
     @State private var currentTime = Date()
     @State private var timer: Timer?
+    @State private var showingAsk = false
+    @AppStorage("enableAppleIntelligence") private var enableAppleIntelligence: Bool = true
     @AppStorage("dashboard_style") private var dashboardStyle: DashboardStyle = .sections
     
     var body: some View {
@@ -289,11 +291,25 @@ struct DashboardView: View {
             .background(Color.gray.opacity(0.05))
             .navigationTitle(dashboardTitle)
             .toolbar {
+                if #available(iOS 26.0, *), enableAppleIntelligence {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            showingAsk = true
+                        } label: {
+                            Label("Ask", systemImage: "apple.intelligence")
+                        }
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 12) {
                         SiteIndicatorPill()
                         StatusIndicator(api: api)
                     }
+                }
+            }
+            .sheet(isPresented: $showingAsk) {
+                if #available(iOS 26.0, *) {
+                    AskView(api: api)
                 }
             }
             .onAppear {

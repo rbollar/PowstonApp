@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A5C0000000000000000000B3 /* AskTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5C0000000000000000000A3 /* AskTools.swift */; };
+		A5C0000000000000000000B2 /* AskView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5C0000000000000000000A2 /* AskView.swift */; };
+		A5C0000000000000000000B1 /* AskAssistant.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5C0000000000000000000A1 /* AskAssistant.swift */; };
 		084A9A09E8F6E9FFDD646360 /* PowstonAPI+InverterData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88D93F9045488E019D129CE6 /* PowstonAPI+InverterData.swift */; };
 		0883B1467C2F2917F5DAFFBA /* BargainHunterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3532742DC5213F15C4FEAB68 /* BargainHunterView.swift */; };
 		09EDD4AAFE8B0DDCA64CB421 /* PowstonAPI+Overrides.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54DAEEECAF595600A2E5822F /* PowstonAPI+Overrides.swift */; };
@@ -248,6 +251,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A5C0000000000000000000A3 /* AskTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskTools.swift; sourceTree = "<group>"; };
+		A5C0000000000000000000A2 /* AskView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskView.swift; sourceTree = "<group>"; };
+		A5C0000000000000000000A1 /* AskAssistant.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskAssistant.swift; sourceTree = "<group>"; };
 		04D1C6531E6F699243D83277 /* SyncMetadata.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SyncMetadata.swift; sourceTree = "<group>"; };
 		06D054DBEC303EC56B0F09F2 /* SyncMetadata+GRDB.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "SyncMetadata+GRDB.swift"; sourceTree = "<group>"; };
 		0BBD0505FD62A872C3BB67A8 /* ActionRecord+InverterAction.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "ActionRecord+InverterAction.swift"; sourceTree = "<group>"; };
@@ -675,6 +681,8 @@
 				EC0F25C43B9010F0AE277404 /* DecisionValues.swift */,
 				8355EC12B8A7638606ED237D /* ForecastAdvisorBuilder.swift */,
 				5FD8E5200E409E6B924F93F7 /* IntelligentSummaryService.swift */,
+				A5C0000000000000000000A3 /* AskTools.swift */,
+				A5C0000000000000000000A1 /* AskAssistant.swift */,
 				87145BD80488D9122B91EC0E /* LocalVoltsAuthService.swift */,
 				AEED1E356FE0494AB76FB3FD /* LocalVoltsCredentialManager.swift */,
 				1240297828B49482D6FAB8F6 /* LocalVoltsService.swift */,
@@ -759,6 +767,7 @@
 				1D0CD80A2EFFC9330095A824 /* ManualOverrideView.swift */,
 				1D0CD80B2EFFC9330095A824 /* PricesView.swift */,
 				1D0CD80C2EFFC9330095A824 /* SettingsView.swift */,
+				A5C0000000000000000000A2 /* AskView.swift */,
 				D352E5EF51404309A4822120 /* ActionItemsView.swift */,
 			);
 			path = Views;
@@ -1327,6 +1336,7 @@
 				1DE54D852F023D5300EC83B4 /* ActionsTableView.swift in Sources */,
 				1D0CD8132EFFC9330095A824 /* Site.swift in Sources */,
 				1D0CD8142EFFC9330095A824 /* SettingsView.swift in Sources */,
+				A5C0000000000000000000B2 /* AskView.swift in Sources */,
 				1D89C4F12F00A5A7009BA1CE /* SectionsDashboard.swift in Sources */,
 				1D27D5AB2F0A162F00F55E5F /* PeakHoursSettingsView.swift in Sources */,
 				1D27D5AC2F0A162F00F55E5F /* LeaderboardSettingsView.swift in Sources */,
@@ -1378,6 +1388,8 @@
 				28E40EC4AF3046FBB04FEFAD /* DecisionValues.swift in Sources */,
 				8F890F54225E7007193CE1D3 /* ForecastAdvisorBuilder.swift in Sources */,
 				AF221364175FA8234597F5FE /* IntelligentSummaryService.swift in Sources */,
+				A5C0000000000000000000B3 /* AskTools.swift in Sources */,
+				A5C0000000000000000000B1 /* AskAssistant.swift in Sources */,
 				1C270CA0D57EE36FFB43A21F /* LocalVoltsAuthService.swift in Sources */,
 				8A0060363158A442B4DDBC0A /* LocalVoltsCredentialManager.swift in Sources */,
 				2946E098DA94BA23FA963F3F /* LocalVoltsService.swift in Sources */,

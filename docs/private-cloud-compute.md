@@ -77,6 +77,27 @@ Sources: session 319 "Build with the new Apple Foundation Model on Private Cloud
 
 Recipe to read a capability's entitlement key: create a profile for the App ID (`POST /profiles` with the bundleId and distribution certificate), base64-decode `profileContent`, `security cms -D -i file.mobileprovision`, then print `:Entitlements` with PlistBuddy.
 
+## What's built (2026-11-14, first pass)
+
+- `Powston/Services/AskTools.swift`: twelve read-only tools named after the MCP read tools: `list_sites`, `get_site_snapshot`, `get_price_forecast`, `get_upcoming_actions`, `get_inverter_status`, `get_today_summary`, `get_command_history`, `get_daily_history`, `get_interval_detail`, `get_tariff_info`, `get_roi`, `get_bill_to_date`. On-device limited mode gets four of them (snapshot, forecast, today, daily history) to fit its small context.
+- `Powston/Services/AskAssistant.swift`: picks the model, keeps one PCC session per sheet, falls back to a fresh on-device session per question, tracks the quota and maps errors (iOS 27 `LanguageModelError`, iOS 26 `GenerationError`).
+- `Powston/Views/AskView.swift`: the sheet, with starter questions, a limited-mode or nearing-limit banner with Apple's "Show options", and a stop button.
+- `DashboardView`: an "Ask" toolbar button (leading), shown on iOS 26+ when the Settings toggle is on.
+- `SettingsView` footer: "Summaries and explanations are written on your iPhone. Ask uses Apple's Private Cloud Compute, which Apple says doesn't store your data. When Private Cloud Compute isn't available, Ask answers on your iPhone."
+- Debug simulator build passes with no warnings in the new files (Xcode 27.1). The button shows on the Dashboard in demo mode. The sheet and answers haven't been tried yet: that needs a device with Apple Intelligence on iOS 27.
+
+Data map (from a read of the code, 2026-11-14):
+
+- Live data (`api.data`) is for the selected inverter only. Prices are ¢/kWh, `rrp` is $/MWh, battery power is negative when charging, grid power is positive when exporting.
+- Forecasts are 30-minute periods from `intervalTime`. `actionPattern` is decoded but unused and undocumented, so the tools don't present a plan. The controller decides every few minutes.
+- Tools that can read another site without switching the app's selection: today, command history, interval detail (forced refresh, because the meter cache key uses the selected site), ROI and inverter status. Snapshot, forecast, daily history, tariff and bill to date are selected-site only and say so.
+- Bill to date uses `fetchCurrentMonthSummary()` (to the last complete day, including supply). Today's figures come from 5-minute action records and exclude supply.
+- `controllerHealthStatus` and `powstonServiceOnline` are never set outside demo mode, so the inverter tool asks `fetchRuntimeDiagnosis` per inverter.
+- Demo mode stores no history, so the history tools return fixed sample figures headed "Demo mode: these are sample figures, not a real site."
+
 ## Open items
 
-- Build 1.4: the chat, the tools, on-device improvements and the Settings footer (decisions above).
+- Try Ask on a device: PCC answers, limited mode (airplane mode), demo mode, the quota banner (Xcode scheme option "Simulate Apple Foundation Models Availability").
+- On-device improvements (decision 8): give the summary services the tools, and set up Evaluations against PCC answers.
+- Version 1.4 (build numbering, What to Test, review notes saying Ask uses PCC and works in demo mode).
+- Model instructions say "Australian English spelling", as the existing services do. The UI strings are US English per house style.

@@ -281,7 +281,7 @@ struct SettingsView: View {
                     } header: {
                         Text("Apple Intelligence")
                     } footer: {
-                        Text("Uses on-device AI to explain controller decisions, generate performance summaries, and forecast prices. All processing happens privately on your device.")
+                        Text("Summaries and explanations are written on your iPhone. Ask uses Apple's Private Cloud Compute, which Apple says doesn't store your data. When Private Cloud Compute isn't available, Ask answers on your iPhone.")
                     }
                 }
                 
