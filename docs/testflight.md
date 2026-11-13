@@ -7,6 +7,8 @@
 
 ## Builds sent (2026-11-13)
 
+- **1.4 (15), 2026-11-14:** Ask (Private Cloud Compute chat, see `docs/private-cloud-compute.md`) on top of 1.3 (14). Built on the box (Xcode 27.1, iOS 27.1 SDK) with the new "Powston iOS AppStore 1.4" profile (5YLC36WSGT) that carries `com.apple.developer.private-cloud-compute`. Rick: "Send it to TF", then "burn 14 and add 15", because Apple won't review a second build while one waits. 14 expired while still WAITING_FOR_BETA_REVIEW; 15 is in Internal Testing and submitted for external review (WAITING_FOR_BETA_REVIEW). Its What to Test covers Ask, then the 1.3 (14) list. The app-level review notes now add that Ask uses Private Cloud Compute or the on-device model, works in demo mode with sample history, and can't control the inverter.
+
 All builds are 1.3, built on the build box with Xcode 27.1 and answered "no non-exempt encryption". Rick: "Answer it that way."
 - **(11):** the October work. In Internal Testing.
 - **(12):** the rotated push secret. In Internal Testing.
@@ -132,9 +134,9 @@ Rick, 2026-11-13: "Fix the GitHub secret leak."
 
 - Ship the 0xdead10cc fix and see whether background crash reports stop.
 - Test Battery ROI, Controller Health and Amber setup on a device.
-- Try the watch app from build 14 on a watch; it hasn't run from this source before.
+- Try the watch app from build 15 on a watch; it hasn't run from this source before.
 - Apple TV: profile, tvOS ship script, a tvOS build.
 - Watch widgets: an entitlements file with the watch app group.
 - Drop PUSH_LEGACY_SECRET on the push server when 1.2 users have moved to 1.3.
-- Look at Acknowledgements on a device (build 14).
-- Watch build 14's Beta App Review; external testers get it once Apple approves.
+- Look at Acknowledgements on a device (build 15).
+- Watch build 15's Beta App Review; external testers get it once Apple approves. (14 was expired before review.)
