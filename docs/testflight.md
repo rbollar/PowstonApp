@@ -12,13 +12,14 @@ All builds are 1.3, built on the build box with Xcode 27.1 and answered "no non-
 - **(12):** the rotated push secret. In Internal Testing.
 - **(13):** adds Acknowledgements. Was submitted for Beta App Review, then **expired** before review. Rick: "Burn 13 and submit 14 with complete test notes."
 - **(14):** the background crash fix, the watch app (embedded, with its sources, under the 1.2 bundle ids) and the watch's iCloud store fix. In Internal Testing and submitted to **External Testing** for Beta App Review; WAITING_FOR_BETA_REVIEW.
-  - What to Test (complete for 1.3):
+  - What to Test (complete for 1.3; the P2P line added while in review after Rick: "I think this includes removing LV p2p tracking and management." The removal is 460cb65, 2026-08-27):
     > What's new in 1.3 (14):
     > - Fixes a crash that could happen while the app was in the background.
     > - The Apple Watch app is back. Open it after signing in on your iPhone; it should show your site.
     > - Amber Electric support alongside Localvolts. Your retailer, prices and cost comparison should match your plan.
     > - Battery ROI: open it from Profit Intelligence and check yesterday, the last 7 days and the last 30 days.
     > - Data Diagnosis in Controller Health, for each inverter.
+    > - Localvolts peer-to-peer trading is gone: Peer Power contracts, trade history and the counterparty map. Localvolts sites still get settlement, cash flow and the retailer comparison.
     > - Tuning shows two more settings when your site provides them.
     > - Limited export and import show as "Ltd Exp" and "Ltd Imp" in the actions table.
     > - Settings > About > Acknowledgements has a link to the source code and the open-source licenses.
