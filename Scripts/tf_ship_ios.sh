@@ -24,7 +24,7 @@ set -euo pipefail
 SCHEME="Powston"
 TEAM_ID="J56G3UQQLN"
 BUNDLE_ID="com.bollar.Powston"
-PROFILE_NAME="Powston iOS AppStore"
+PROFILE_NAME="Powston iOS AppStore 1.4"   # 1.4 adds the Private Cloud Compute entitlement
 WIDGET_ID="com.bollar.Powston.PowstonWidget"
 WIDGET_PROFILE="Powston Widget iOS AppStore"
 WATCH_ID="com.bollar.Powston.watch"

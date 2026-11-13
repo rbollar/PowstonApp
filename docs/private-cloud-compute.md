@@ -1,0 +1,82 @@
+# Apple Private Cloud Compute in Powston (planning)
+
+Status: design discussion started 2026-11-14. Nothing built yet.
+
+## What exists today
+
+- The app already uses Apple's on-device model through the Foundation Models framework:
+  - `Powston/Services/DecisionReasonService.swift` explains controller decisions
+  - `Powston/Services/IntelligentSummaryService.swift` writes performance summaries, forecast explanations and enhanced notifications
+  - `Powston/Services/PriceForecastService.swift` explains price forecasts
+- Settings has an "Apple Intelligence" toggle (iOS 26+). Its footer says "All processing happens privately on your device." That stops being true once anything runs on Private Cloud Compute.
+- Deployment targets: iPhone app 17.6 (the AI code is behind `#available(iOS 26.0, *)`), widgets 26.2, watch 10.6.
+
+## Powston's MCP server (the model Rick pointed at)
+
+Documented in the ha-powston README ("Connecting an AI agent to Powston") and in
+<https://app.powston.com/api/agent-setup/prompt.md> (read 2026-11-14):
+
+- Endpoint `https://app.powston.com/api/mcp`, Streamable HTTP, stateless.
+- Auth: OAuth 2.1 (90-day tokens) or a static Profile API key. Default scope `read:site`; writes need an opt-in on the consent screen (`write:tuning`, `write:holds`).
+- Read tools: `list_my_sites`, `get_site_snapshot`, `get_battery_soc`, `get_current_price`, `get_today_summary`, `get_upcoming_actions`, `get_inverter_status`, `get_inverter_connection`, `get_ev_charger`, `search_ev_models`, `get_command_history`, `get_interval_detail`, `get_daily_history`, `get_tariff_info`, `get_roi`, `get_bill_to_date`, `get_tuning_parameters`, `get_tuning_history`, `get_code_edit_history`, `list_scheduled_changes`, `get_p2p_starter_plan`, `get_decision_code_reference`, `simulate_decision_code`, `get_support_history`, `get_release_notes`, `get_controller_help`, `report_problem` (draft only).
+- Write tools: `update_tuning_parameters`, `schedule_tuning_change`, `schedule_battery_hold`, `cancel_scheduled_change`.
+- Agent rules: show the exact change and get agreement before any write (a battery hold commands real hardware); inverter telemetry is not meter data, so never present it as billing evidence.
+
+## Apple Private Cloud Compute for third-party apps (WWDC26)
+
+Sources: session 319 "Build with the new Apple Foundation Model on Private Cloud Compute"
+(<https://developer.apple.com/videos/play/wwdc2026/319/>) and the WWDC26 machine-learning guide
+(<https://developer.apple.com/wwdc26/guides/machine-learning/>), read 2026-11-14.
+
+- API: `LanguageModelSession(model: PrivateCloudComputeLanguageModel())`; check `isAvailable` and fall back.
+- 32K context (on-device is 4K on 26, 8K on 27 on newer devices). Reasoning levels `.light`, `.moderate`, `.deep`.
+- `@Generable` structured output and `tools:` work as on-device.
+- Eligibility: apps with fewer than 2 million first-time App Store downloads; apply on the developer site. Some blogs name an entitlement `com.apple.developer.private-cloud-compute`; Apple's pages don't.
+- No token cost to the developer. A per-user daily quota counts against the user's iCloud account (iCloud+ raises it); `quotaUsage` reports it and Xcode can simulate the limits.
+- Needs an Apple Intelligence device and a network connection. Callable from watchOS.
+- Apple says request data is never stored and the claims are independently verified.
+- The framework also accepts third-party providers (Claude, Gemini) through the Language Model protocol (session 339). Nothing about MCP.
+
+- SDK check (Xcode 27.1, 2026-11-14): `PrivateCloudComputeLanguageModel` is `@available(iOS 27.0, macOS 27.0, visionOS 27.0, watchOS 27.0)` and unavailable on tvOS.
+
+## Decisions (Rick, 2026-11-14, round 1)
+
+1. Build an in-app chat on PCC. Its tools mirror Powston's MCP read tools but run natively over the app's own API client and data. The app does not call Powston's MCP endpoint.
+2. Read-only in v1: no tuning changes, battery holds or scheduled changes.
+3. PCC for the chat, on-device for the short summaries, falling back to on-device when PCC isn't available. No bring-your-own Claude or Gemini. Rick: "our on-device use would benefit from improvement, possibly informed by PCC."
+4. Rick already has PCC access: "Just need to add the entitlement."
+5. iPhone only in v1.
+6. "Powston" means the service; "the app" means our client (GLOSSARY.md). The feature name is still open.
+
+## Decisions (Rick, 2026-11-14, round 2: "Agree on all")
+
+7. When PCC isn't available (offline, out of quota, iOS 26), the chat answers single questions with the on-device model and the same tools, with a "limited mode" note.
+8. Improving the on-device features: (i) the summaries get the same read-only tools in place of data pasted into the prompt; (ii) PCC answers serve as the reference when testing on-device prompts with the Evaluations framework. (iii) A PCC morning summary cached for offline reading is deferred.
+9. v1 tools: site snapshot, battery SoC, current price, today's summary, upcoming actions, inverter status, command history, interval detail, daily history, tariff info, ROI, bill to date. Out: the P2P starter plan (P2P is gone in 1.3), the decision-code simulator, support history, release notes and problem reports. Drop any the API client can't serve yet.
+10. The instructions carry Powston's rule: inverter telemetry isn't meter data and is never billing evidence. Bill to date is labeled an estimate.
+11. Tools default to the site selected in the app; the user can name another.
+12. One "Apple Intelligence" toggle; the footer will say that short summaries run on the iPhone and questions use Private Cloud Compute. Wording goes through house-style.md. The App Privacy label doesn't change.
+13. Show Apple's nearing-limit note. At the limit, switch to limited mode and offer Apple's "Show options" button.
+
+## Decisions (Rick, 2026-11-14, round 3: "Agree on all")
+
+14. A Dashboard toolbar button opens the chat in a sheet; no new tab.
+15. The chat works in Try Demo Mode on the sample data. Review notes will say so and that it uses Private Cloud Compute.
+16. A conversation lasts until the sheet closes; nothing is stored or synced.
+17. An empty chat offers three or four starter questions.
+18. Button and sheet title "Ask"; placeholder "Ask about your battery, prices or savings".
+19. Ships in 1.4 on the iOS 27 SDK, TestFlight first. 1.3 (14) ships as it is.
+
+## Entitlement and profile (2026-11-14)
+
+- Rick enabled Private Cloud Compute on the App ID `com.bollar.Powston` in the developer portal. The API lists it as capability `PRIVATE_CLOUD_COMPUTE`.
+- Xcode 27.1 has no record of the entitlement key. A new App Store profile showed it: `com.apple.developer.private-cloud-compute = true`.
+- New profile "Powston iOS AppStore 1.4" (5YLC36WSGT, IOS_APP_STORE, certificate WS9V8H6G44). The old "Powston iOS AppStore" (J74Q3DW9VR) predates the capability and stays untouched; `Scripts/tf_ship_ios.sh` now uses the 1.4 name.
+- The key is in `Powston/Powston.entitlements`.
+- Before Rick signed the pending agreement, the ASC API answered 403 `FORBIDDEN.REQUIRED_AGREEMENTS_MISSING_OR_EXPIRED` on every endpoint, including `GET /apps/{id}`.
+
+Recipe to read a capability's entitlement key: create a profile for the App ID (`POST /profiles` with the bundleId and distribution certificate), base64-decode `profileContent`, `security cms -D -i file.mobileprovision`, then print `:Entitlements` with PlistBuddy.
+
+## Open items
+
+- Build 1.4: the chat, the tools, on-device improvements and the Settings footer (decisions above).
