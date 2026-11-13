@@ -128,6 +128,19 @@ Changes in 17:
 - After the first PCC failure in a sheet, the app runs a check: a plain PCC request, then (if that works) one with our instructions but no tools. The notice reports each result.
 - The snapshot labels the wholesale price "not what the household pays". The instructions say to write cents as 15.7¢/kWh, never with $, and to mention the wholesale price only if asked.
 
+## What DeepSix's PCC setup shows (deeplog-01, 2026-11-14)
+
+- Rick: "PCC works fine on iPhone on DeepSix." So his iPhone, account and region can reach PCC from a distributed build.
+- DeepSix needed only the entitlement and the App ID capability. Enabling the capability invalidated older profiles, and DeepSix regenerated them. There's no Info.plist key and no App Store Connect step.
+- Eligibility: the Small Business Program, fewer than 2M first-time downloads, and App Store, TestFlight or ad hoc distribution.
+- Errors DeepSix has seen:
+  - ModelManagerError 1046 means a missing entitlement. `isAvailable` is still true.
+  - LanguageModelError -1 after a hang of about 53 s, on about 1.5% of requests. DeepSix abandons each request after 20 s.
+  - DeepSix has never seen 32031.
+- DeepSix's session: a new `LanguageModelSession(model:instructions:)` for each request, no tools, no reasoning, no prewarm, and `respond(to:options:)` (not streamed).
+- Build 16's entitlement checked (`codesign -d --entitlements` and `security cms -D` on the embedded profile): both have `com.apple.developer.private-cloud-compute = true`.
+- What's left is Powston's session shape: 12 tools, `streamResponse` and longer instructions. Build 17's check splits a plain request and instructions-only from the full session.
+
 ## Open items
 
 - Try Ask on a device: PCC answers, limited mode (airplane mode), demo mode, the quota banner (Xcode scheme option "Simulate Apple Foundation Models Availability").

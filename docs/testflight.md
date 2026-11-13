@@ -7,6 +7,8 @@
 
 ## Builds sent (2026-11-13)
 
+- **1.4 (17), 2026-11-14:** after 16 showed PCC refusing every request (error 32031). Readable errors, a PCC check after the first failure, and cleaner price wording. Rick: "Make those changes." 16 expired while still WAITING_FOR_BETA_REVIEW; 17 is in Internal Testing and submitted for external review (WAITING_FOR_BETA_REVIEW).
+
 - **1.4 (16), 2026-11-14:** the Ask fixes after Rick's test of 15 (see `docs/private-cloud-compute.md`, "Build 15 on Rick's iPhone"). Rick: "Yes, that's fine" to shipping 16 and expiring 15. 15 expired while still WAITING_FOR_BETA_REVIEW; 16 is in Internal Testing and submitted for external review (WAITING_FOR_BETA_REVIEW). What to Test adds a "Since build 15" line asking testers to screenshot any error.
 
 - **1.4 (15), 2026-11-14:** Ask (Private Cloud Compute chat, see `docs/private-cloud-compute.md`) on top of 1.3 (14). Built on the box (Xcode 27.1, iOS 27.1 SDK) with the new "Powston iOS AppStore 1.4" profile (5YLC36WSGT) that carries `com.apple.developer.private-cloud-compute`. Rick: "Send it to TF", then "burn 14 and add 15", because Apple won't review a second build while one waits. 14 expired while still WAITING_FOR_BETA_REVIEW; 15 is in Internal Testing and submitted for external review (WAITING_FOR_BETA_REVIEW). Its What to Test covers Ask, then the 1.3 (14) list. The app-level review notes now add that Ask uses Private Cloud Compute or the on-device model, works in demo mode with sample history, and can't control the inverter.
@@ -136,9 +138,9 @@ Rick, 2026-11-13: "Fix the GitHub secret leak."
 
 - Ship the 0xdead10cc fix and see whether background crash reports stop.
 - Test Battery ROI, Controller Health and Amber setup on a device.
-- Try the watch app from build 16 on a watch; it hasn't run from this source before.
+- Try the watch app from build 17 on a watch; it hasn't run from this source before.
 - Apple TV: profile, tvOS ship script, a tvOS build.
 - Watch widgets: an entitlements file with the watch app group.
 - Drop PUSH_LEGACY_SECRET on the push server when 1.2 users have moved to 1.3.
-- Look at Acknowledgements on a device (build 16).
-- Watch build 16's Beta App Review; external testers get it once Apple approves. (14 and 15 were expired before review.)
+- Look at Acknowledgements on a device (build 17).
+- Watch build 17's Beta App Review; external testers get it once Apple approves. (14 to 16 were expired before review.)
