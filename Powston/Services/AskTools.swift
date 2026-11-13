@@ -270,11 +270,11 @@ nonisolated struct SiteSnapshotTool: Tool {
 nonisolated struct PriceForecastTool: Tool {
     let api: PowstonAPI
     let name = "get_price_forecast"
-    let description = "Forecast buy and sell prices for the selected site in 30-minute periods, with the cheapest and most expensive times."
+    let description = "Forecast buy and sell prices for the selected site in 30-minute periods, with the cheapest and most expensive times. For questions about tonight, tomorrow or later today, ask for 24 hours."
 
     @Generable
     struct Arguments {
-        @Guide(description: "How many hours ahead, from 1 to 24.", .range(1...24))
+        @Guide(description: "How many hours ahead, from 1 to 24. Use 24 unless the question is only about the next hour or two.", .range(1...24))
         var hours: Int
     }
 
@@ -315,6 +315,10 @@ nonisolated struct PriceForecastTool: Tool {
         }
         if periods.contains(where: { $0.buy < 0 }) {
             lines.append("Some periods have negative buy prices (paid to use power).")
+        }
+        if let last = periods.last {
+            let end = last.start.addingTimeInterval(30 * 60)
+            lines.append("The forecast data ends at \(AskData.time(end, site: site)). Say so if the question is about later than that.")
         }
         lines.append("Periods (start: buy / sell):")
         for period in periods {

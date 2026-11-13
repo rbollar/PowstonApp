@@ -178,6 +178,18 @@ struct AskView: View {
 private struct AskBubble: View {
     let message: AskMessage
 
+    /// Text views render inline Markdown but not lists, so "* item" lines would show
+    /// their asterisks. Turn list markers into bullets.
+    static func bulleted(_ text: String) -> String {
+        text.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+            let trimmed = line.drop { $0 == " " }
+            for marker in ["* ", "- ", "+ "] where trimmed.hasPrefix(marker) {
+                return "• " + trimmed.dropFirst(marker.count)
+            }
+            return String(line)
+        }.joined(separator: "\n")
+    }
+
     var body: some View {
         switch message.role {
         case .user:
@@ -190,7 +202,7 @@ private struct AskBubble: View {
             }
         case .assistant:
             HStack {
-                Text(LocalizedStringKey(message.text))
+                Text(LocalizedStringKey(Self.bulleted(message.text)))
                     .textSelection(.enabled)
                     .padding(10)
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))

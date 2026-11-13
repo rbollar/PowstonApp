@@ -141,6 +141,14 @@ Changes in 17:
 - Build 16's entitlement checked (`codesign -d --entitlements` and `security cms -D` on the embedded profile): both have `com.apple.developer.private-cloud-compute = true`.
 - What's left is Powston's session shape: 12 tools, `streamResponse` and longer instructions. Build 17's check splits a plain request and instructions-only from the full session.
 
+## Build 17 on Rick's iPhone (2026-11-14)
+
+- "What will my battery do tonight?" was answered by PCC, with no fallback note, so the check never ran. It isn't clear why 17 works where 16 failed with 32031. The only changes to what PCC receives were the price wording in the instructions and the wholesale label in the snapshot. Server-side propagation after this morning's capability change is just as likely.
+- Answer problems, fixed in 18:
+  - "* " list lines showed their asterisks, because SwiftUI `Text` renders inline Markdown only. They're now turned into "• ".
+  - The model asked the forecast tool for about 8 hours and said "the forecast beyond 5:00 PM isn't listed". The tool now says to use 24 hours for tonight or tomorrow, and it states where its data ends.
+  - With no overnight data, the model guessed about overnight charging. The 24-hour forecast gives it the data.
+
 ## Open items
 
 - Try Ask on a device: PCC answers, limited mode (airplane mode), demo mode, the quota banner (Xcode scheme option "Simulate Apple Foundation Models Availability").
