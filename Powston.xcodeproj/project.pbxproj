@@ -67,6 +67,8 @@
 		1D89C4F12F00A5A7009BA1CE /* SectionsDashboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D89C4F02F00A5A7009BA1CE /* SectionsDashboard.swift */; };
 		1D89DE002F30B00000351F8D /* PowstonDataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D89DD002F30B00000351F8D /* PowstonDataStore.swift */; };
 		1D89DE012F30B00000351F8D /* SmartRefreshManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D89DD012F30B00000351F8D /* SmartRefreshManager.swift */; };
+		A1B2C3D4E5F647A8B9C0D1F2 /* SmartRefreshManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D89DD012F30B00000351F8D /* SmartRefreshManager.swift */; };
+		A1B2C3D4E5F647A8B9C0D1F3 /* PowstonWatch Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 1DE54D902F0374B300EC83B4 /* PowstonWatch Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		1D89DE022F30B00000351F8D /* PowstonAPI+ControllerHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D89DD022F30B00000351F8D /* PowstonAPI+ControllerHealth.swift */; };
 		1D89DE032F30B00000351F8D /* PowstonAPI+DayRates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D89DD032F30B00000351F8D /* PowstonAPI+DayRates.swift */; };
 		1D89DE102F30B00000351F8D /* ActionRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D89DD102F30B00000351F8D /* ActionRecord.swift */; };
@@ -144,6 +146,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		A1B2C3D4E5F647A8B9C0D1F4 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1D53FC9B2EFE5FE300A40C55 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1DE54D8F2F0374B300EC83B4;
+			remoteInfo = "PowstonWatch Watch App";
+		};
 		1D04AB022F0791A9007B3BED /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 1D53FC9B2EFE5FE300A40C55 /* Project object */;
@@ -203,6 +212,17 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		A1B2C3D4E5F647A8B9C0D1F6 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				A1B2C3D4E5F647A8B9C0D1F3 /* PowstonWatch Watch App.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		1D96833F2F06626900C46F2C /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -874,11 +894,13 @@
 				1D53FCA02EFE5FE300A40C55 /* Frameworks */,
 				1D53FCA12EFE5FE300A40C55 /* Resources */,
 				1DE54DE32F0380ED00EC83B4 /* Embed Foundation Extensions */,
+				A1B2C3D4E5F647A8B9C0D1F6 /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				1DE54DDD2F0380ED00EC83B4 /* PBXTargetDependency */,
+				A1B2C3D4E5F647A8B9C0D1F5 /* PBXTargetDependency */,
 			);
 			name = Powston;
 			packageProductDependencies = (
@@ -1238,6 +1260,7 @@
 				1D0610AD2F13069C00A37B70 /* ScorecardCalculator.swift in Sources */,
 				1D0610B02F130B0500A37B70 /* Site.swift in Sources */,
 				1D0610AC2F13068300A37B70 /* MeterRecord.swift in Sources */,
+				A1B2C3D4E5F647A8B9C0D1F2 /* SmartRefreshManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1437,6 +1460,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		A1B2C3D4E5F647A8B9C0D1F5 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1DE54D8F2F0374B300EC83B4 /* PowstonWatch Watch App */;
+			targetProxy = A1B2C3D4E5F647A8B9C0D1F4 /* PBXContainerItemProxy */;
+		};
 		1D04AB032F0791A9007B3BED /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 1D04AAF02F0791A7007B3BED /* PowstonTV */;
@@ -1653,7 +1681,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = Powston/Powston.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = J56G3UQQLN;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1704,7 +1732,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = Powston/Powston.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = J56G3UQQLN;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1971,7 +1999,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = J56G3UQQLN;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PowstonWatchWidgetExtension/Info.plist;
@@ -2004,7 +2032,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = J56G3UQQLN;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PowstonWatchWidgetExtension/Info.plist;
@@ -2102,7 +2130,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "PowstonWatch Watch App/PowstonWatch Watch App.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = J56G3UQQLN;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -2136,7 +2164,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "PowstonWatch Watch App/PowstonWatch Watch App.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = J56G3UQQLN;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -2263,7 +2291,7 @@
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_ENTITLEMENTS = PowstonWidgetExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = J56G3UQQLN;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PowstonWidget/Info.plist;
@@ -2296,7 +2324,7 @@
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_ENTITLEMENTS = PowstonWidgetExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = J56G3UQQLN;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PowstonWidget/Info.plist;

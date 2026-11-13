@@ -15,6 +15,7 @@
 import Foundation
 import GRDB
 import SwiftUI
+import UIKit
 import Combine
 
 // MARK: - Sync Progress
@@ -116,6 +117,17 @@ class PowstonDataStore: ObservableObject {
     
     private init() {
         setupDatabase()
+        observeAppLifecycle()
+    }
+
+    private func observeAppLifecycle() {
+        let center = NotificationCenter.default
+        center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { _ in
+            center.post(name: Database.suspendNotification, object: nil)
+        }
+        center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: nil) { _ in
+            center.post(name: Database.resumeNotification, object: nil)
+        }
     }
     
     // MARK: - Setup
@@ -130,6 +142,10 @@ class PowstonDataStore: ObservableObject {
             var config = Configuration()
             config.readonly = false
             config.foreignKeysEnabled = true
+            // The database lives in the App Group container. iOS kills a suspended app
+            // that still holds a lock on a file there (0xdead10cc), so GRDB stops
+            // database work while the app is in the background.
+            config.observesSuspensionNotifications = true
             
             let path = Self.databasePath
             print("🗄️ Database path: \(path)")

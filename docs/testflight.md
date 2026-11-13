@@ -34,8 +34,40 @@ All builds are 1.3, built on the build box with Xcode 27.1 and answered "no non-
 ## Versions
 
 - **1.3 (11):** set on the iPhone app, its widget, the watch app and the watch widgets (Debug and Release).
-- **tvOS targets:** untouched at 1.0 (4). The Top Shelf extension is `com.bollar.PowstonTV.PowstonTopShelf`, which isn't prefixed by the app's `com.bollar.Powston`. Check that before the next Apple TV build.
-- **Watch app:** the project has no "Embed Watch Content" phase, so the iPhone archive doesn't carry the watch app. How earlier builds delivered it is not known yet.
+- **tvOS targets:** untouched at 1.0 (4).
+
+## Watch and Apple TV (checked 2026-11-13)
+
+Rick, 2026-11-13: "I don't think we have any AppleTV changes but we need to figure out how to reconnect TV and watch."
+
+- **What the store has:** iOS 1.2 (build 1, 2026-01-18) lists Apple Watch support on the App Store (`itunes.apple.com/lookup?id=6757072169` gives `Watch4` in `supportedDevices`), so that build carried the watch app. tvOS 1.0 is for sale from build 5 (2026-01-10). Both were signed with Xcode-managed "Team Store" profiles, so they were built in Xcode on the Mac, not with a script.
+- **Watch, the break:** no committed version of the project embeds the watch app (the first commit after January is 2026-02-10), so 1.3 (11–13) ship without it. An App Store 1.3 built this way would take the watch app away from current users.
+- **Watch, the fix (in the working copy, not committed):** an "Embed Watch Content" phase (`$(CONTENTS_FOLDER_PATH)/Watch`) and a dependency on the watch target in the Powston target (ids `A1B2C3D4E5F647A8B9C0D1F3`–`F6`). The Release simulator build now has `Powston.app/Watch/PowstonWatch Watch App.app` with its widgets extension inside.
+- **Apple TV, the break:** `PowstonTV/TVAPI.swift` and `TVContentView.swift` use `RefreshableAPI` and `SmartRefreshManager` (`Powston/Services/SmartRefreshManager.swift`, written for both platforms), but the file was never added to the PowstonTV target, so tvOS hasn't built since early 2026.
+- **Apple TV, the fix (working copy, not committed):** `SmartRefreshManager.swift` added to the PowstonTV sources (`A1B2C3D4E5F647A8B9C0D1F2`). The tvOS Release simulator build succeeds.
+- **Apple TV changes since 1.0:** the TV code was last committed in the 2026-02 snapshots, after tvOS 1.0 (5) shipped on 2026-01-10, so there is unreleased TV work (at least the smart refresh). No commit marks exactly what shipped.
+- **Top Shelf:** `PowstonTopShelf` isn't embedded in the TV app and its id `com.bollar.PowstonTV.PowstonTopShelf` isn't under `com.bollar.Powston`, so it has never shipped. Leave it out, or rename it to `com.bollar.Powston.PowstonTopShelf` and embed it.
+- **How the devices get credentials:** the iPhone sends them to the watch over WatchConnectivity (`WatchConnectivityManager`) and writes them to iCloud key-value storage (`CloudCredentialSync`), which the TV and the watch read.
+  - iPhone and TV use the KVS identifier `$(TeamIdentifierPrefix)com.bollar.powston`; the watch uses `…com.bollar.Powston` (capital P, since 2026-02-10). If ASC treats these as different stores, the watch's iCloud fallback never sees the phone's credentials and it relies on WatchConnectivity alone. Align the watch to the lowercase one; changing the phone would strand stored credentials.
+- **Bundle ids and profiles (ASC, read 2026-11-13):**
+  - `com.bollar.Powston.watchkitapp`: the Xcode-managed profile is INVALID (the watch app group was added after it was made).
+  - `com.bollar.Powston.watchkitapp.PowstonWatchWidgets`: Xcode-managed profile active to 2026-12-26.
+  - `com.bollar.Powston` has a tvOS Xcode-managed profile active to 2026-12-26.
+  - Older ids `com.bollar.Powston.watch`, `com.bollar.Powston.watch.PowstonWatchWidget` and `com.bollar.PowstonTV` are also registered; which watch id 1.2 shipped is not known.
+- **To ship from the build box:**
+  - Watch: two more App Store profiles ("Powston Watch iOS AppStore", "Powston Watch Widgets iOS AppStore") and their names in `Scripts/tf_ship_ios.sh`.
+  - Apple TV: a TVOS_APP_STORE profile for `com.bollar.Powston` and a tvOS variant of the ship script (scheme PowstonTV, `generic/platform=tvOS`, altool `-t appletvos`). tvOS builds are numbered separately; the last was 1.0.1 (4).
+- **Read-only ASC lookups from the dev Mac:** the TrueOffset key is in `~/.appstoreconnect/private_keys`; set `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_PATH` as in TrueOffset's `docs/app-store-1.4.md`, then `python3 -c 'import sys; sys.path.insert(0,"Scripts"); from asc_profile import req; …'`. Builds per platform: `/builds?filter[app]=6757072169&filter[preReleaseVersion.platform]=TV_OS`.
+
+## Background crash (0xdead10cc), 2026-11-13
+
+Rick, 2026-11-13: "App crashed in background. I sent to ASC."
+
+- **Report:** TestFlight feedback `AN_7ZlMjc_ab7e403goJCQU`, 1.3 (13), iPhone19,7, iOS 27.3, comment "Crash in background." It is the same story as nine earlier reports on 1.2.2 (9, 10) from March to May ("In background", "Pushed to background"); their logs have expired, so only the newest can be read.
+- **Cause:** `Termination Reason: RUNNINGBOARD 0xdead10cc`. iOS killed the app for holding a file lock while suspended. The main thread was inside a GRDB write (`PowstonDataStore.saveActions` → `DatabaseWriter.write`) on `powston_data.sqlite`, which lives in the App Group container `group.com.bollar.powston`. The system frames above it in the log are mis-symbolicated; the Powston and GRDB frames are the real ones.
+- **Fix (working copy, not committed):** `PowstonDataStore` sets GRDB's `observesSuspensionNotifications` and posts `Database.suspendNotification` on `didEnterBackground` and `Database.resumeNotification` on `willEnterForeground`. GRDB then interrupts a running write and refuses new ones until the app comes back, so no lock is held when iOS suspends it. A write refused in the background throws and is retried on the next refresh. The Release simulator build succeeds; the crash itself can only be confirmed on a device over time.
+- **Not done:** the widget and watch don't open this database, so it could move out of the App Group container, but that needs a data migration.
+- **Fetch a crash log:** `GET /apps/6757072169/betaFeedbackCrashSubmissions?sort=-createdDate`, then `GET /betaFeedbackCrashSubmissions/{id}/crashLog` (`data.attributes.logText`). Logs disappear once their build expires.
 
 ## App Review 2.5.19 (hidden features)
 
@@ -82,8 +114,9 @@ Rick, 2026-11-13: "Fix the GitHub secret leak."
 
 ## Open
 
+- Ship the 0xdead10cc fix and see whether background crash reports stop.
 - Test Battery ROI, Controller Health and Amber setup on a device.
-- The watch app and Apple TV builds.
+- Watch and Apple TV: commit the two project fixes, make the profiles, then a build with the watch embedded and a tvOS build (see above).
 - Drop PUSH_LEGACY_SECRET on the push server when 1.2 users have moved to 1.3.
 - Look at Acknowledgements on a device (build 13).
 - Watch build 13's Beta App Review; external testers get it once Apple approves.

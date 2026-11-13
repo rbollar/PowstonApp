@@ -4,7 +4,8 @@
 #
 # Runs ON THE BUILD BOX against a copy of this repo in ~/powston (see
 # docs/testflight.md). Adapted from TrueOffset's Scripts/tf_ship_ios.sh: same box,
-# keychain, API key and build lock. Two profiles: the app and its widget.
+# keychain, API key and build lock. Four profiles: the app, its widget, the watch app
+# (embedded in the iPhone app) and the watch widgets.
 #
 # USAGE:
 #   Scripts/tf_ship_ios.sh                    # archive, export, upload
@@ -26,6 +27,10 @@ BUNDLE_ID="com.bollar.Powston"
 PROFILE_NAME="Powston iOS AppStore"
 WIDGET_ID="com.bollar.Powston.PowstonWidget"
 WIDGET_PROFILE="Powston Widget iOS AppStore"
+WATCH_ID="com.bollar.Powston.watchkitapp"
+WATCH_PROFILE="Powston Watch iOS AppStore"
+WATCH_WIDGET_ID="com.bollar.Powston.watchkitapp.PowstonWatchWidgets"
+WATCH_WIDGET_PROFILE="Powston Watch Widgets iOS AppStore"
 KEYCHAIN="${KEYCHAIN:-$HOME/build.keychain-db}"
 
 DO_UPLOAD=1
@@ -125,6 +130,8 @@ mkdir -p "$DSYMS"
 cp -R "$ARCHIVE/dSYMs/." "$DSYMS/"
 echo "dSYMs kept in $DSYMS"
 
+[[ -d "$ARCHIVE/Products/Applications/Powston.app/Watch/PowstonWatch Watch App.app" ]] || die "the archive has no watch app"
+
 if [[ "$DO_UPLOAD" == 0 ]]; then
   echo "--archive-only: $ARCHIVE"
   exit 0
@@ -133,6 +140,8 @@ fi
 log "Provisioning profile"
 python3 Scripts/asc_profile.py "$BUNDLE_ID" "$PROFILE_NAME" IOS_APP_STORE
 python3 Scripts/asc_profile.py "$WIDGET_ID" "$WIDGET_PROFILE" IOS_APP_STORE
+python3 Scripts/asc_profile.py "$WATCH_ID" "$WATCH_PROFILE" IOS_APP_STORE
+python3 Scripts/asc_profile.py "$WATCH_WIDGET_ID" "$WATCH_WIDGET_PROFILE" IOS_APP_STORE
 
 # Manual signing: the API key can't cloud-sign, so automatic export fails headlessly
 cat >"$WORK/ExportOptions.plist" <<PLIST
@@ -145,7 +154,7 @@ cat >"$WORK/ExportOptions.plist" <<PLIST
   <key>teamID</key><string>$TEAM_ID</string>
   <key>signingStyle</key><string>manual</string>
   <key>signingCertificate</key><string>Apple Distribution</string>
-  <key>provisioningProfiles</key><dict><key>$BUNDLE_ID</key><string>$PROFILE_NAME</string><key>$WIDGET_ID</key><string>$WIDGET_PROFILE</string></dict>
+  <key>provisioningProfiles</key><dict><key>$BUNDLE_ID</key><string>$PROFILE_NAME</string><key>$WIDGET_ID</key><string>$WIDGET_PROFILE</string><key>$WATCH_ID</key><string>$WATCH_PROFILE</string><key>$WATCH_WIDGET_ID</key><string>$WATCH_WIDGET_PROFILE</string></dict>
 </dict>
 </plist>
 PLIST
