@@ -169,6 +169,49 @@ xcodebuild -exportArchive \
 IPA="$(find "$WORK/export" -maxdepth 1 -type f -name '*.ipa' | head -1)"
 [[ -f "$IPA" ]] || die "export produced no .ipa (see $WORK/export.log)"
 
+# xcodebuild -exportArchive copies the watch app as plain files and leaves it signed for
+# development (it isn't in DistributionSummary.plist), which App Store Connect refuses
+# (90161). Re-sign the watch widgets, the watch app and then the iPhone app, inner first.
+profile_path() {
+  local f
+  for f in "$HOME/Library/MobileDevice/Provisioning Profiles"/*.mobileprovision; do
+    [[ "$(security cms -D -i "$f" 2>/dev/null | plutil -extract Name raw - 2>/dev/null)" == "$1" ]] && { echo "$f"; return; }
+  done
+  die "profile not installed: $1"
+}
+setkey() {  # plist, key (may contain dots), type, value
+  /usr/libexec/PlistBuddy -c "Delete :$2" "$1" >/dev/null 2>&1 || true
+  /usr/libexec/PlistBuddy -c "Add :$2 $3 $4" "$1" >/dev/null
+}
+resign() {  # bundle, profile name
+  local ent="$WORK/ent.plist" prof="$WORK/prof.plist"
+  codesign -d --entitlements - --xml "$1" >"$ent" 2>/dev/null
+  [[ -s "$ent" ]] || plutil -create xml1 "$ent"   # the watch widgets have no entitlements file
+  setkey "$ent" get-task-allow bool false
+  setkey "$ent" beta-reports-active bool true
+  if [[ -n "${2:-}" ]]; then
+    cp "$(profile_path "$2")" "$1/embedded.mobileprovision"
+    security cms -D -i "$1/embedded.mobileprovision" >"$prof"
+    setkey "$ent" application-identifier string "$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" "$prof")"
+    setkey "$ent" com.apple.developer.team-identifier string "$TEAM_ID"
+  fi
+  codesign -f -s "Apple Distribution" --keychain "$KEYCHAIN" --entitlements "$ent" --generate-entitlement-der "$1" >/dev/null
+}
+UNZ="$WORK/ipa"
+rm -rf "$UNZ"; mkdir -p "$UNZ"
+(cd "$UNZ" && unzip -q "$IPA")
+WATCH_APP="$UNZ/Payload/Powston.app/Watch/PowstonWatch Watch App.app"
+[[ -f "$WATCH_APP/PowstonWatch Watch App" ]] || die "the watch app has no executable"
+if [[ "$(security cms -D -i "$WATCH_APP/embedded.mobileprovision" | plutil -extract Name raw -)" != "$WATCH_PROFILE" ]]; then
+  log "Re-signing the watch app"
+  resign "$WATCH_APP/PlugIns/PowstonWatchWidgetsExtension.appex" "$WATCH_WIDGET_PROFILE"
+  resign "$WATCH_APP" "$WATCH_PROFILE"
+  resign "$UNZ/Payload/Powston.app"
+  codesign --verify --deep --strict "$UNZ/Payload/Powston.app" || die "signature check failed after re-signing"
+  rm -f "$IPA"
+  (cd "$UNZ" && zip -qry "$IPA" .)
+fi
+
 # altool, not xcodebuild's uploader: the latter mints a token Apple answers with 401
 log "Uploading $IPA"
 mkdir -p "$HOME/.appstoreconnect/private_keys"

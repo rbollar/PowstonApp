@@ -389,6 +389,13 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		A1B2C3D4E5F647A8B9C0D1F9 /* Exceptions for "PowstonWatchWidgetExtension" folder in "PowstonWatchWidgetsExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 1D9683282F06626800C46F2C /* PowstonWatchWidgetsExtension */;
+		};
 		1D04AB132F0791A9007B3BED /* Exceptions for "PowstonTV" folder in "PowstonTV" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -420,6 +427,19 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		A1B2C3D4E5F647A8B9C0D1F7 /* PowstonWatch Watch App */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "PowstonWatch Watch App";
+			sourceTree = "<group>";
+		};
+		A1B2C3D4E5F647A8B9C0D1F8 /* PowstonWatchWidgetExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A1B2C3D4E5F647A8B9C0D1F9 /* Exceptions for "PowstonWatchWidgetExtension" folder in "PowstonWatchWidgetsExtension" target */,
+			);
+			path = PowstonWatchWidgetExtension;
+			sourceTree = "<group>";
+		};
 		1D04AAF22F0791A8007B3BED /* PowstonTV */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -752,6 +772,8 @@
 				1D53FCB72EFE5FE500A40C55 /* PowstonTests */,
 				1D53FCC12EFE5FE500A40C55 /* PowstonUITests */,
 				1DE54D9F2F0374B500EC83B4 /* PowstonWatch Watch AppTests */,
+				A1B2C3D4E5F647A8B9C0D1F7 /* PowstonWatch Watch App */,
+				A1B2C3D4E5F647A8B9C0D1F8 /* PowstonWatchWidgetExtension */,
 				1DE54DA92F0374B500EC83B4 /* PowstonWatch Watch AppUITests */,
 				1DE54DCE2F0380EC00EC83B4 /* PowstonWidget */,
 				1D04AAF22F0791A8007B3BED /* PowstonTV */,
@@ -965,6 +987,9 @@
 			);
 			dependencies = (
 			);
+			fileSystemSynchronizedGroups = (
+				A1B2C3D4E5F647A8B9C0D1F8 /* PowstonWatchWidgetExtension */,
+			);
 			name = PowstonWatchWidgetsExtension;
 			productName = PowstonWatchWidgetsExtension;
 			productReference = 1D9683292F06626800C46F2C /* PowstonWatchWidgetsExtension.appex */;
@@ -1003,6 +1028,9 @@
 			);
 			dependencies = (
 				1D9683392F06626900C46F2C /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A1B2C3D4E5F647A8B9C0D1F7 /* PowstonWatch Watch App */,
 			);
 			name = "PowstonWatch Watch App";
 			productName = "PowstonWatch Watch App";
