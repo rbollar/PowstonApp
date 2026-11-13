@@ -11,6 +11,7 @@
 import Foundation
 import Combine
 import FoundationModels
+import os
 
 struct AskMessage: Identifiable, Equatable {
     enum Role { case user, assistant, notice }
@@ -23,6 +24,8 @@ struct AskMessage: Identifiable, Equatable {
 @available(iOS 26.0, *)
 @MainActor
 final class AskAssistant: ObservableObject {
+
+    private static let log = Logger(subsystem: "com.bollar.Powston", category: "Ask")
 
     enum Mode: Equatable {
         /// Private Cloud Compute: full conversation, 32K context
@@ -123,6 +126,7 @@ final class AskAssistant: ObservableObject {
                 try await stream(question, in: cloudSessionForConversation())
                 return
             } catch let error as PrivateCloudComputeLanguageModel.Error {
+                Self.log.error("PCC error: \(String(describing: error), privacy: .public)")
                 switchToLimited(after: error)
             } catch where Self.kind(of: error) == .contextFull {
                 // The conversation outgrew the context; start a fresh one and retry
@@ -135,9 +139,19 @@ final class AskAssistant: ObservableObject {
                     show(error)
                     return
                 }
-            } catch {
+            } catch where Self.kind(of: error) == .refused || error is CancellationError {
                 show(error)
                 return
+            } catch {
+                // Anything else: answer this question on the iPhone, and try
+                // Private Cloud Compute again with a fresh session next time
+                Self.log.error("PCC answer failed: \(String(describing: error), privacy: .public)")
+                cloudSession = nil
+                guard SystemLanguageModel.default.isAvailable else {
+                    show(error)
+                    return
+                }
+                messages.append(AskMessage(role: .notice, text: String(localized: "Private Cloud Compute couldn't answer that, so your iPhone is answering instead.") + Self.detail(error)))
             }
         }
 
@@ -146,8 +160,15 @@ final class AskAssistant: ObservableObject {
             let session = LanguageModelSession(model: SystemLanguageModel.default, tools: limitedTools, instructions: Self.instructions(limited: true))
             try await stream(question, in: session)
         } catch {
+            Self.log.error("On-device answer failed: \(String(describing: error), privacy: .public)")
             show(error)
         }
+    }
+
+    /// The error's own words, for TestFlight testers to report. Empty for cancellation.
+    private static func detail(_ error: Error) -> String {
+        if error is CancellationError { return "" }
+        return "\n(" + String(describing: error) + ")"
     }
 
     @available(iOS 27.0, *)
@@ -201,6 +222,9 @@ final class AskAssistant: ObservableObject {
             }
             throw error
         }
+        #if DEBUG
+        Self.log.info("Answer: \(self.messages[index].text, privacy: .public)")
+        #endif
         if #available(iOS 27.0, *), mode == .privateCloud {
             updateQuota(PrivateCloudComputeLanguageModel().quotaUsage)
         }
@@ -215,7 +239,7 @@ final class AskAssistant: ObservableObject {
         case .contextFull:
             text = String(localized: "That needs more data than I can look at on your iPhone. Try a shorter time span.")
         case .other:
-            text = String(localized: "Something went wrong answering that. Please try again.")
+            text = String(localized: "Something went wrong answering that. Please try again.") + Self.detail(error)
         }
         messages.append(AskMessage(role: .notice, text: text))
     }

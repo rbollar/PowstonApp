@@ -32,6 +32,14 @@ struct AskView: View {
                     inputBar
                 }
             }
+            #if DEBUG
+            // Launch with -AskProbe "question" to ask it automatically (simulator diagnosis)
+            .task {
+                if let probe = UserDefaults.standard.string(forKey: "AskProbe"), assistant.messages.isEmpty {
+                    assistant.ask(probe)
+                }
+            }
+            #endif
             .navigationTitle("Ask")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

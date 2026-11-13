@@ -313,6 +313,9 @@ struct DashboardView: View {
                 }
             }
             .onAppear {
+                #if DEBUG
+                if UserDefaults.standard.string(forKey: "AskProbe") != nil { showingAsk = true }
+                #endif
                 startTimer()
             }
             .onDisappear {

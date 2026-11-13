@@ -12,6 +12,7 @@
 
 import Foundation
 import FoundationModels
+import os
 
 // MARK: - Tool set
 
@@ -44,6 +45,39 @@ enum AskTools {
             DailyHistoryTool(api: api)
         ]
     }
+}
+
+// MARK: - Time limit
+
+nonisolated private let askToolLog = Logger(subsystem: "com.bollar.Powston", category: "Ask")
+
+/// Runs a lookup with a time limit. A slow Powston API call otherwise holds up
+/// the whole answer until the model gives up on it.
+nonisolated func askLookup(_ tool: String, limit seconds: Double = 15, _ work: @escaping @Sendable () async -> String) async -> String {
+    let start = Date()
+    let done = OSAllocatedUnfairLock(initialState: false)
+    let result: String = await withCheckedContinuation { continuation in
+        func finish(_ value: String) {
+            let first = done.withLock { claimed -> Bool in
+                if claimed { return false }
+                claimed = true
+                return true
+            }
+            if first { continuation.resume(returning: value) }
+        }
+        Task { finish(await work()) }
+        Task {
+            try? await Task.sleep(for: .seconds(seconds))
+            finish("TIMED_OUT")
+        }
+    }
+    let elapsed = Date().timeIntervalSince(start)
+    if result == "TIMED_OUT" {
+        askToolLog.error("\(tool, privacy: .public) timed out after \(elapsed, format: .fixed(precision: 1), privacy: .public)s")
+        return "This lookup took too long, so there's no answer from it right now. Tell the user it timed out and suggest asking again in a moment."
+    }
+    askToolLog.info("\(tool, privacy: .public) took \(elapsed, format: .fixed(precision: 1), privacy: .public)s")
+    return result
 }
 
 // MARK: - Shared helpers
@@ -150,7 +184,8 @@ nonisolated struct ListSitesTool: Tool {
     struct Arguments {}
 
     func call(arguments: Arguments) async throws -> String {
-        await Self.answer(api: api)
+        let api = api
+        return await askLookup(name) { await Self.answer(api: api) }
     }
 
     @MainActor
@@ -184,7 +219,8 @@ nonisolated struct SiteSnapshotTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        await Self.answer(site: arguments.site, api: api)
+        let api = api, args = arguments
+        return await askLookup(name) { await Self.answer(site: args.site, api: api) }
     }
 
     @MainActor
@@ -243,7 +279,8 @@ nonisolated struct PriceForecastTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        await Self.answer(hours: arguments.hours, api: api)
+        let api = api, args = arguments
+        return await askLookup(name) { await Self.answer(hours: args.hours, api: api) }
     }
 
     @MainActor
@@ -299,7 +336,8 @@ nonisolated struct UpcomingActionsTool: Tool {
     struct Arguments {}
 
     func call(arguments: Arguments) async throws -> String {
-        await Self.answer(api: api)
+        let api = api
+        return await askLookup(name) { await Self.answer(api: api) }
     }
 
     @MainActor
@@ -354,7 +392,8 @@ nonisolated struct InverterStatusTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        await Self.answer(site: arguments.site, api: api)
+        let api = api, args = arguments
+        return await askLookup(name) { await Self.answer(site: args.site, api: api) }
     }
 
     @MainActor
@@ -408,7 +447,8 @@ nonisolated struct TodaySummaryTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        await Self.answer(site: arguments.site, api: api)
+        let api = api, args = arguments
+        return await askLookup(name) { await Self.answer(site: args.site, api: api) }
     }
 
     @MainActor
@@ -463,7 +503,8 @@ nonisolated struct CommandHistoryTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        await Self.answer(daysAgo: arguments.daysAgo, site: arguments.site, api: api)
+        let api = api, args = arguments
+        return await askLookup(name) { await Self.answer(daysAgo: args.daysAgo, site: args.site, api: api) }
     }
 
     @MainActor
@@ -536,7 +577,8 @@ nonisolated struct DailyHistoryTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        await Self.answer(days: arguments.days, api: api)
+        let api = api, args = arguments
+        return await askLookup(name) { await Self.answer(days: args.days, api: api) }
     }
 
     @MainActor
@@ -588,7 +630,8 @@ nonisolated struct IntervalDetailTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        await Self.answer(daysAgo: arguments.daysAgo, site: arguments.site, api: api)
+        let api = api, args = arguments
+        return await askLookup(name) { await Self.answer(daysAgo: args.daysAgo, site: args.site, api: api) }
     }
 
     @MainActor
@@ -644,7 +687,8 @@ nonisolated struct TariffInfoTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        await Self.answer(days: arguments.days, api: api)
+        let api = api, args = arguments
+        return await askLookup(name) { await Self.answer(days: args.days, api: api) }
     }
 
     @MainActor
@@ -695,7 +739,8 @@ nonisolated struct ROITool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        await Self.answer(days: Int(arguments.days) ?? 7, site: arguments.site, api: api)
+        let api = api, args = arguments
+        return await askLookup(name) { await Self.answer(days: Int(args.days) ?? 7, site: args.site, api: api) }
     }
 
     @MainActor
@@ -754,7 +799,8 @@ nonisolated struct BillToDateTool: Tool {
     struct Arguments {}
 
     func call(arguments: Arguments) async throws -> String {
-        await Self.answer(api: api)
+        let api = api
+        return await askLookup(name) { await Self.answer(api: api) }
     }
 
     @MainActor

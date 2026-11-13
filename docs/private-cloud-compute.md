@@ -95,6 +95,25 @@ Data map (from a read of the code, 2026-11-14):
 - `controllerHealthStatus` and `powstonServiceOnline` are never set outside demo mode, so the inverter tool asks `fetchRuntimeDiagnosis` per inverter.
 - Demo mode stores no history, so the history tools return fixed sample figures headed "Demo mode: these are sample figures, not a real site."
 
+## Build 15 on Rick's iPhone (2026-11-14)
+
+- Rick asked "How did yesterday go?" and "Did we make money?" on his iPhone (iOS 27, airplane mode with Wi-Fi). Both answers showed "Something went wrong answering that. Please try again." No limited-mode banner appeared, so the session was on PCC and the error wasn't a `PrivateCloudComputeLanguageModel.Error`. The app didn't keep the error. Rick's guess: "Maybe a timeout?"
+- The shipped IPA has `com.apple.developer.private-cloud-compute = true` (checked with `codesign -d --entitlements` on the box's export).
+- Simulator findings:
+  - Unsigned (`CODE_SIGNING_ALLOWED=NO`), FoundationModels stops the app: "FoundationModels/ErrorConversion.swift:140: Fatal error: Missing entitlement: com.apple.developer.private-cloud-compute".
+  - Ad-hoc signed (`CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual PROVISIONING_PROFILE_SPECIFIER=`), PCC answers in demo mode with tools (the log shows the server model `instruct_server_v2`).
+- The likely difference is real data. Daily history, ROI and bill to date make Powston API calls; daily history can make several. A slow tool probably made the whole response time out.
+- Fixes after 15:
+  - Every tool runs under a 15-second limit (`askLookup`). On timeout it tells the model the lookup timed out.
+  - Every tool call is logged with its duration (Logger subsystem `com.bollar.Powston`, category `Ask`).
+  - Any PCC failure other than a refusal or cancellation now answers the question on-device, and the next question tries PCC again with a fresh session.
+  - Error notices show the error's own text in brackets, so testers can report it.
+- Debug-only probe: launch with `-AskProbe "question"` to open Ask and ask it. Recipe:
+  ```
+  xcrun simctl launch --console-pty <sim> com.bollar.Powston -AskProbe "How did yesterday go?"
+  xcrun simctl spawn <sim> log show --last 5m --info --debug --predicate 'subsystem == "com.bollar.Powston" AND category == "Ask"'
+  ```
+
 ## Open items
 
 - Try Ask on a device: PCC answers, limited mode (airplane mode), demo mode, the quota banner (Xcode scheme option "Simulate Apple Foundation Models Availability").
