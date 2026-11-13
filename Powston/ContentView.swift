@@ -99,8 +99,9 @@ struct ContentView: View {
                     SmartRefreshManager.shared.start(api: api)
                 } else if let siteId = api.selectedSite?.id {
                     // Zero-inverter site — trigger LocalVolts sync directly
-                    Task.detached { [siteId] in
-                        await LocalVoltsService.shared.performDailySyncIfNeeded(siteId: siteId)
+                    let retailer = api.selectedSite?.activeRetailer
+                    Task.detached { [siteId, retailer] in
+                        await LocalVoltsService.shared.performDailySyncIfNeeded(siteId: siteId, activeRetailer: retailer)
                     }
                 }
             }

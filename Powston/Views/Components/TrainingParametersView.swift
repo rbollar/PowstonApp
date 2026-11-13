@@ -105,7 +105,29 @@ struct TrainingParametersView: View {
                         description: "Multiplier for import decisions. Higher values make the system more willing to import energy.",
                         fieldKey: "importFactor"
                     )
-                    
+
+                    if params.minExportMargin != nil {
+                        parameterRow(
+                            title: "Minimum Export Margin",
+                            value: $params.minExportMargin,
+                            range: 0...20,
+                            unit: "¢/kWh",
+                            description: "Above 0, exports are floored at the expected recharge cost plus this margin instead of the Default Export Price guide. 0 keeps the classic guide behavior.",
+                            fieldKey: "minExportMargin"
+                        )
+                    }
+
+                    if params.goodSunHour != nil {
+                        parameterRow(
+                            title: "Solar-Fill Trust",
+                            value: $params.goodSunHour,
+                            range: 0...100,
+                            unit: "%",
+                            description: "How much of the battery today's forecast solar must cover before the import gate fully trusts solar to fill it. 0 disables this.",
+                            fieldKey: "goodSunHour"
+                        )
+                    }
+
                 } header: {
                     Label("Magic Mode Tunables", systemImage: "wand.and.stars")
                 }

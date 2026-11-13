@@ -54,6 +54,9 @@ struct ProfitIntelligenceView: View {
                     // Bargain Hunter - enabled
                     bargainHunterCard
 
+                    // Battery ROI - enabled
+                    batteryROICard
+
                     // Retailer Comparison - enabled
                     retailerComparisonCard
 
@@ -537,6 +540,42 @@ struct ProfitIntelligenceView: View {
         }
     }
     
+    // MARK: - Battery ROI Card
+
+    private var batteryROICard: some View {
+        NavigationLink(destination: MarketROIView()) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Image(systemName: "battery.100.bolt")
+                        .font(.title3)
+                        .foregroundColor(.green)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Battery ROI")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.primary)
+
+                        Text("Arbitrage, solar time-shift & self-supply")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding()
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .disabled(api.isDemoMode)
+        .opacity(api.isDemoMode ? 0.6 : 1)
+    }
+
     // MARK: - Retailer Comparison Card
 
     private var retailerComparisonCard: some View {

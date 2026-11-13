@@ -328,8 +328,13 @@ class LocalVoltsService: ObservableObject {
     /// Perform daily background sync if needed
     /// Call this periodically (e.g., when Powston API refreshes data)
     /// Backfills settlement data if stale or missing
-    func performDailySyncIfNeeded(siteId: Int) async {
+    func performDailySyncIfNeeded(siteId: Int, activeRetailer: String? = nil) async {
         guard hasCredentials(forSiteId: siteId) else { return }
+
+        // A site that has moved to another retailer has no new LV settlement to fetch
+        if let retailer = activeRetailer, !retailer.isEmpty, retailer.lowercased() != "localvolts" {
+            return
+        }
 
         // Settlement schema migrations — clear cached summaries to force re-fetch with corrected logic
         // v14: include export network energy credits in cashflow calculation

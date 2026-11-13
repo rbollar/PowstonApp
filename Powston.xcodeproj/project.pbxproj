@@ -92,6 +92,7 @@
 		28E40EC4AF3046FBB04FEFAD /* DecisionValues.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC0F25C43B9010F0AE277404 /* DecisionValues.swift */; };
 		2946E098DA94BA23FA963F3F /* LocalVoltsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1240297828B49482D6FAB8F6 /* LocalVoltsService.swift */; };
 		0F185AC9BB9D4376B94E0134 /* AmberService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD20BC6581AF42DCB9A83B22 /* AmberService.swift */; };
+		A1B2C3D4E5F647A8B9C0D1E3 /* PowstonAPI+MarketROI.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F647A8B9C0D1E2 /* PowstonAPI+MarketROI.swift */; };
 		31B41603DF450FE5EB6E1C3C /* SavingsAnalysisCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20F8DD33891E4E4FA33627AD /* SavingsAnalysisCalculator.swift */; };
 		3936DCEC7047E82A4D5B852F /* PeakAnalysisView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1A3A6DBAF147B6554AF7E31 /* PeakAnalysisView.swift */; };
 		3FCB6688336D362A5F30C72A /* PowstonAPI+MeterRecords.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AC06970A7DEB37D18EAD663 /* PowstonAPI+MeterRecords.swift */; };
@@ -138,6 +139,7 @@
 		F2D683459EC165F60F637136 /* UserGoal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2717E52BE2B616C5F92F3049 /* UserGoal.swift */; };
 		F356D9E8F93376D06A0C4993 /* LocalVoltsSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E06218BA61CCF2CAD20E9F21 /* LocalVoltsSetupView.swift */; };
 		CE954D92BF75451A90A8BDD6 /* AmberViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D23D6D36C8F43FBAC5AB485 /* AmberViews.swift */; };
+		A1B2C3D4E5F647A8B9C0D1E5 /* MarketROIView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F647A8B9C0D1E4 /* MarketROIView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -233,6 +235,7 @@
 		1052E6A5FD0F16D8F435FF47 /* ProfitIntelligenceCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ProfitIntelligenceCard.swift; sourceTree = "<group>"; };
 		1240297828B49482D6FAB8F6 /* LocalVoltsService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LocalVoltsService.swift; sourceTree = "<group>"; };
 		FD20BC6581AF42DCB9A83B22 /* AmberService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmberService.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F647A8B9C0D1E2 /* PowstonAPI+MarketROI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PowstonAPI+MarketROI.swift"; sourceTree = "<group>"; };
 		1D04AAF12F0791A7007B3BED /* PowstonTV.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PowstonTV.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		1D04AB012F0791A9007B3BED /* PowstonTVTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PowstonTVTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		1D04AB0B2F0791A9007B3BED /* PowstonTVUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PowstonTVUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -354,6 +357,7 @@
 		DF9501C38A3411DF925D8390 /* PowstonAPI+Sites.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "PowstonAPI+Sites.swift"; sourceTree = "<group>"; };
 		E06218BA61CCF2CAD20E9F21 /* LocalVoltsSetupView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LocalVoltsSetupView.swift; sourceTree = "<group>"; };
 		7D23D6D36C8F43FBAC5AB485 /* AmberViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmberViews.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F647A8B9C0D1E4 /* MarketROIView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketROIView.swift; sourceTree = "<group>"; };
 		E0AC926E72215CB60A5863FA /* PowstonDataStore+DaySummaries.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "PowstonDataStore+DaySummaries.swift"; sourceTree = "<group>"; };
 		E1A3A6DBAF147B6554AF7E31 /* PeakAnalysisView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PeakAnalysisView.swift; sourceTree = "<group>"; };
 		EAED173438269DF438A8EB86 /* PowstonAPI+Tariffs.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "PowstonAPI+Tariffs.swift"; sourceTree = "<group>"; };
@@ -633,6 +637,7 @@
 				AEED1E356FE0494AB76FB3FD /* LocalVoltsCredentialManager.swift */,
 				1240297828B49482D6FAB8F6 /* LocalVoltsService.swift */,
 				FD20BC6581AF42DCB9A83B22 /* AmberService.swift */,
+				A1B2C3D4E5F647A8B9C0D1E2 /* PowstonAPI+MarketROI.swift */,
 				A45C5D8FCB5CB414795DAC2E /* LocalVoltsSocketClient.swift */,
 				4CE8C032A9384A98F1D2B4D8 /* MeterRecordDB.swift */,
 				47A1A607CF5985A8C0CB8E54 /* PerformanceSummaryBuilder.swift */,
@@ -687,6 +692,7 @@
 				90210E3851B21B5697EE874C /* HistoryCharts.swift */,
 				E06218BA61CCF2CAD20E9F21 /* LocalVoltsSetupView.swift */,
 				7D23D6D36C8F43FBAC5AB485 /* AmberViews.swift */,
+				A1B2C3D4E5F647A8B9C0D1E4 /* MarketROIView.swift */,
 				E1A3A6DBAF147B6554AF7E31 /* PeakAnalysisView.swift */,
 				1052E6A5FD0F16D8F435FF47 /* ProfitIntelligenceCard.swift */,
 				95C5628A369887F7F8ECCECE /* ProfitIntelligenceView.swift */,
@@ -1322,6 +1328,7 @@
 				8A0060363158A442B4DDBC0A /* LocalVoltsCredentialManager.swift in Sources */,
 				2946E098DA94BA23FA963F3F /* LocalVoltsService.swift in Sources */,
 				0F185AC9BB9D4376B94E0134 /* AmberService.swift in Sources */,
+				A1B2C3D4E5F647A8B9C0D1E3 /* PowstonAPI+MarketROI.swift in Sources */,
 				CF30140EE2BEB8223930EBCF /* LocalVoltsSocketClient.swift in Sources */,
 				54E470E05D95E444795308E6 /* MeterRecordDB.swift in Sources */,
 				197B79AD867612F22D3B1DBB /* PerformanceSummaryBuilder.swift in Sources */,
@@ -1356,6 +1363,7 @@
 				174018F4B34BBF1597565795 /* HistoryCharts.swift in Sources */,
 				F356D9E8F93376D06A0C4993 /* LocalVoltsSetupView.swift in Sources */,
 				CE954D92BF75451A90A8BDD6 /* AmberViews.swift in Sources */,
+				A1B2C3D4E5F647A8B9C0D1E5 /* MarketROIView.swift in Sources */,
 				3936DCEC7047E82A4D5B852F /* PeakAnalysisView.swift in Sources */,
 				DCE9691DCBB4E234DD45847E /* ProfitIntelligenceCard.swift in Sources */,
 				5575A05FEA0AD81E0900F214 /* ProfitIntelligenceView.swift in Sources */,
@@ -1641,7 +1649,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = Powston/Powston.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = J56G3UQQLN;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1666,7 +1674,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.2;
-				MARKETING_VERSION = 1.2.2;
+				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.bollar.Powston;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1692,7 +1700,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = Powston/Powston.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = J56G3UQQLN;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1717,7 +1725,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.2;
-				MARKETING_VERSION = 1.2.2;
+				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.bollar.Powston;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1959,7 +1967,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = J56G3UQQLN;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PowstonWatchWidgetExtension/Info.plist;
@@ -1971,7 +1979,7 @@
 					"@executable_path/../../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.bollar.Powston.watchkitapp.PowstonWatchWidgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -1992,7 +2000,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = J56G3UQQLN;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PowstonWatchWidgetExtension/Info.plist;
@@ -2004,7 +2012,7 @@
 					"@executable_path/../../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.bollar.Powston.watchkitapp.PowstonWatchWidgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -2090,7 +2098,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "PowstonWatch Watch App/PowstonWatch Watch App.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = J56G3UQQLN;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -2101,7 +2109,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.bollar.Powston.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -2124,7 +2132,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "PowstonWatch Watch App/PowstonWatch Watch App.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = J56G3UQQLN;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -2135,7 +2143,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.bollar.Powston.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -2251,7 +2259,7 @@
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_ENTITLEMENTS = PowstonWidgetExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = J56G3UQQLN;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PowstonWidget/Info.plist;
@@ -2263,7 +2271,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.2;
+				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.bollar.Powston.PowstonWidget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -2284,7 +2292,7 @@
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_ENTITLEMENTS = PowstonWidgetExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = J56G3UQQLN;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PowstonWidget/Info.plist;
@@ -2296,7 +2304,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.2;
+				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.bollar.Powston.PowstonWidget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;

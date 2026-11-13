@@ -71,7 +71,16 @@ class PowstonAPI: ObservableObject {
     }
     
     @AppStorage("demo_mode_enabled") var demoModeEnabled: Bool = false
-    @AppStorage("use_dev_server") var useDevServer: Bool = false
+    @AppStorage("use_dev_server") private var storedUseDevServer: Bool = false
+    /// The dev server switch is for Debug builds only (App Review 2.5.19: no hidden
+    /// features in Release). A Release build always talks to app.powston.com.
+    var useDevServer: Bool {
+        #if DEBUG
+        return storedUseDevServer
+        #else
+        return false
+        #endif
+    }
     @AppStorage("single_site_mode") var singleSiteMode: Bool = false
     
     @AppStorage("selected_site_id") internal var persistedSiteId: Int = 0 {

@@ -145,10 +145,8 @@ struct SiteDetailView: View {
                 }
                 
                 // Retailer detection
-                if site.localvoltsKey != nil || site.localvoltsPartnerId != nil {
-                    InfoRow(label: "Retailer", value: "LocalVolts", color: .purple)
-                } else if site.amberKey != nil || site.amberSiteId != nil {
-                    InfoRow(label: "Retailer", value: "Amber Electric", color: .orange)
+                if let retailer = site.retailerName {
+                    InfoRow(label: "Retailer", value: retailer, color: site.isLocalVoltsSite ? .purple : .orange)
                 }
             }
             
@@ -1077,19 +1075,13 @@ struct SiteInfoCard: View {
     }
     
     var detectedRetailer: String {
-        if site.localvoltsKey != nil || site.localvoltsPartnerId != nil {
-            return "LocalVolts"
-        } else if site.amberKey != nil || site.amberSiteId != nil {
-            return "Amber"
-        } else {
-            return "Unknown"
-        }
+        site.retailerName ?? "Unknown"
     }
     
     var retailerIcon: String {
-        if site.localvoltsKey != nil || site.localvoltsPartnerId != nil {
+        if site.isLocalVoltsSite {
             return "bolt.circle"
-        } else if site.amberKey != nil || site.amberSiteId != nil {
+        } else if site.retailerName != nil {
             return "leaf.circle"
         } else {
             return "questionmark.circle"

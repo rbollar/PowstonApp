@@ -2,7 +2,7 @@
 //  RetailerComparisonView.swift
 //  Powston
 //
-//  Shows LocalVolts actual costs and links to Energy Made Easy
+//  Shows the site's actual costs and links to Energy Made Easy
 //
 
 import SwiftUI
@@ -11,6 +11,17 @@ struct RetailerComparisonView: View {
     @EnvironmentObject var api: PowstonAPI
 
     @State private var localVoltsSummary: LocalVoltsCostSummary?
+
+    private var isLocalVolts: Bool { api.selectedSite?.isLocalVoltsSite ?? false }
+
+    /// Retailer name for labels; the cost period can span a retailer change,
+    /// so only LocalVolts settlement figures are attributed by name
+    private var retailerName: String { api.selectedSite?.retailerName ?? "your retailer" }
+
+    /// Amber, LocalVolts, and Flow Power pass through wholesale spot prices
+    private var isWholesaleRetailer: Bool {
+        ["amber", "localvolts", "flowpower"].contains(api.selectedSite?.activeRetailer?.lowercased() ?? "") || isLocalVolts
+    }
 
     var body: some View {
         ScrollView {
@@ -26,7 +37,9 @@ struct RetailerComparisonView: View {
                 energyMadeEasyCard
 
                 // Tips
-                tipsCard
+                if isWholesaleRetailer {
+                    tipsCard
+                }
             }
             .padding()
         }
@@ -48,7 +61,7 @@ struct RetailerComparisonView: View {
             Text("Retailer Comparison")
                 .font(.title2.bold())
 
-            Text("Compare your LocalVolts costs with other retailers")
+            Text("Compare your \(isLocalVolts ? "LocalVolts" : "energy") costs with other retailers")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -63,7 +76,7 @@ struct RetailerComparisonView: View {
             HStack {
                 Image(systemName: "bolt.fill")
                     .foregroundColor(.yellow)
-                Text("Your LocalVolts Costs")
+                Text(isLocalVolts ? "Your LocalVolts Costs" : "Your Energy Costs")
                     .font(.headline)
                 Spacer()
                 Text(summary.periodDescription)
@@ -192,16 +205,18 @@ struct RetailerComparisonView: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                tipRow(
-                    icon: "bolt.circle",
-                    title: "LocalVolts isn't on EME",
-                    description: "Wholesale/P2P pricing doesn't fit EME's comparison format"
-                )
+                if isLocalVolts {
+                    tipRow(
+                        icon: "bolt.circle",
+                        title: "LocalVolts isn't on EME",
+                        description: "Wholesale pricing doesn't fit EME's comparison format"
+                    )
+                }
 
                 tipRow(
                     icon: "chart.line.uptrend.xyaxis",
                     title: "Wholesale volatility",
-                    description: "LocalVolts costs vary with spot prices; EME assumes stable rates"
+                    description: "\(retailerName) costs vary with spot prices; EME assumes stable rates"
                 )
             }
         }
@@ -243,8 +258,11 @@ struct RetailerComparisonView: View {
         formatter.dateFormat = "d MMM yy"
         formatter.timeZone = powstonTimezone()
 
-        // Try LV settlement data first (authoritative, correctly aggregated)
-        let lvSummaries = PowstonDataStore.shared.getLVCashflowSummaries(siteId: siteId, from: startDate, to: yesterday)
+        // LocalVolts sites: try LV settlement data first (authoritative, correctly aggregated).
+        // Other retailers use the Powston summary, which covers the whole period.
+        let lvSummaries = isLocalVolts
+            ? PowstonDataStore.shared.getLVCashflowSummaries(siteId: siteId, from: startDate, to: yesterday)
+            : []
         if !lvSummaries.isEmpty {
             let agg = lvSummaries.aggregated()
             let days = lvSummaries.count

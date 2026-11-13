@@ -12,6 +12,7 @@ struct ControllerHealthView: View {
     
     @State private var siteMonitors: [SiteMonitor] = []
     @State private var communicationDevices: [CommunicationDevice] = []
+    @State private var diagnoses: [(inverter: Inverter, diagnosis: RuntimeDiagnosis)] = []
     @State private var isLoading = true
     @State private var error: String?
     
@@ -62,8 +63,21 @@ struct ControllerHealthView: View {
                     }
                 }
                 
+                // Powston's own runtime-data diagnosis per inverter
+                if !diagnoses.isEmpty {
+                    Section {
+                        ForEach(diagnoses, id: \.inverter.id) { entry in
+                            RuntimeDiagnosisCard(inverter: entry.inverter, diagnosis: entry.diagnosis)
+                        }
+                    } header: {
+                        Text("Data Diagnosis")
+                    } footer: {
+                        Text("Powston's check of whether live data is arriving from each inverter.")
+                    }
+                }
+
                 // Empty state
-                if siteMonitors.isEmpty && communicationDevices.isEmpty {
+                if siteMonitors.isEmpty && communicationDevices.isEmpty && diagnoses.isEmpty {
                     Section {
                         HStack {
                             Image(systemName: "antenna.radiowaves.left.and.right.slash")
@@ -93,10 +107,19 @@ struct ControllerHealthView: View {
         async let devicesTask = api.fetchCommunicationDevices(siteId: site.id)
         
         let (monitors, devices) = await (monitorsTask, devicesTask)
+
+        var loadedDiagnoses: [(inverter: Inverter, diagnosis: RuntimeDiagnosis)] = []
+        for inverter in api.inverters where inverter.siteId == site.id {
+            if let diagnosis = await api.fetchRuntimeDiagnosis(inverterId: inverter.id) {
+                loadedDiagnoses.append((inverter, diagnosis))
+            }
+        }
+        let diagnosisResults = loadedDiagnoses
         
         await MainActor.run {
             self.siteMonitors = monitors
             self.communicationDevices = devices
+            self.diagnoses = diagnosisResults
             self.isLoading = false
             
             if monitors.isEmpty && devices.isEmpty {
@@ -421,6 +444,52 @@ struct CommunicationDeviceCard: View {
 }
 
 // MARK: - Detail Row Helper
+struct RuntimeDiagnosisCard: View {
+    let inverter: Inverter
+    let diagnosis: RuntimeDiagnosis
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "stethoscope")
+                    .foregroundColor(.blue)
+                Text(inverter.productName)
+                    .font(.headline)
+                Spacer()
+                Text(inverter.serialNumber)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+
+            Text(diagnosis.verdictLabel)
+                .font(.subheadline.weight(.medium))
+
+            if let headline = diagnosis.headline {
+                Text(headline)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            if let rows = diagnosis.runtimeData?.rowsLast30Min {
+                DetailRow(label: "Data rows in last 30 min", value: "\(rows)")
+            }
+
+            if let steps = diagnosis.nextSteps, !steps.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Next steps")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    ForEach(steps, id: \.self) { step in
+                        Text("• \(step)")
+                            .font(.caption)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
 struct DetailRow: View {
     let label: String
     let value: String

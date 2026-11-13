@@ -108,7 +108,7 @@ extension InverterAction {
                 if let values = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
                     serial = values["serial_number"] as? String
 
-                    // Extract optimal charge/discharge for P2P detection
+                    // Extract optimal charge/discharge for limited-rate detection
                     self.optimalDischarging = values["optimal_discharging"] as? Double
                     self.optimalCharging = values["optimal_charging"] as? Double
 

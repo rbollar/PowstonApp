@@ -39,7 +39,7 @@ struct CombinedAction: Identifiable {
     let allActions: [Int: InverterAction]  // inverterId -> action
     let expectedInverterCount: Int  // How many inverters should have data
 
-    // Lead inverter capacities for accurate P2P vs full-rate classification
+    // Lead inverter capacities for accurate limited vs full-rate classification
     var leadDischargeCapacity: Int? = nil
     var leadChargeCapacity: Int? = nil
 

@@ -9,6 +9,14 @@ struct DecisionsView: View {
     @EnvironmentObject var api: PowstonAPI
     @AppStorage("scorecard_enabled") private var scorecardEnabled: Bool = true
     @AppStorage("show_experimental_features") private var showExperimentalFeatures: Bool = false
+    /// Experimental features are Debug-only (App Review 2.5.19).
+    private var experimentalFeaturesOn: Bool {
+        #if DEBUG
+        return showExperimentalFeatures
+        #else
+        return false
+        #endif
+    }
     @State private var showDecisionTrace = false
     @State private var showActionsTable = false
 
@@ -105,7 +113,7 @@ struct DecisionsView: View {
                 DecisionsChartCard()
 
                 // Strategy / Action Items (experimental - hidden by default)
-                if showExperimentalFeatures && !api.isDemoMode {
+                if experimentalFeaturesOn && !api.isDemoMode {
                     ActionItemsDashboardCard()
                 }
 
@@ -393,7 +401,7 @@ struct DecisionsView: View {
     }
     
     /// Display action label. For export actions, just shows "export" — real-time data
-    /// lacks optimal_discharging so we can't reliably distinguish trickle/p2p here.
+    /// lacks optimal_discharging so we can't reliably distinguish trickle/limited here.
     func displayAction(_ action: String, gridKw: Double? = nil) -> String {
         let lower = action.lowercased()
         if lower.contains("curtail") { return "curtail" }

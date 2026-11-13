@@ -102,6 +102,32 @@ struct Site: Codable, Identifiable {
     var hasWind: Bool { (windPower ?? 0) > 0 }
     var hasHydro: Bool { (hydroPower ?? 0) > 0 }
 
+    // MARK: - Retailer
+
+    /// Whether LocalVolts is this site's retailer. Uses active_retailer, falling
+    /// back to the LocalVolts fields for site records that don't report it.
+    var isLocalVoltsSite: Bool {
+        if let retailer = activeRetailer, !retailer.isEmpty {
+            return retailer.lowercased() == "localvolts"
+        }
+        return localvoltsKey != nil || localvoltsPartnerId != nil
+    }
+
+    /// Display name of the site's retailer, or nil when unknown
+    var retailerName: String? {
+        switch activeRetailer?.lowercased() {
+        case "amber": return "Amber Electric"
+        case "localvolts": return "LocalVolts"
+        case "flowpower": return "Flow Power"
+        case "globird": return "GloBird Energy"
+        case "other": return nil
+        default: break
+        }
+        if localvoltsKey != nil || localvoltsPartnerId != nil { return "LocalVolts" }
+        if amberKey != nil || amberSiteId != nil { return "Amber Electric" }
+        return nil
+    }
+
     /// Icon for the site's generation source(s)
     var generationIcon: String {
         let sources = [hasSolar, hasWind, hasHydro].filter { $0 }.count

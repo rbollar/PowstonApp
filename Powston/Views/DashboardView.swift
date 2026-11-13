@@ -372,8 +372,8 @@ struct DashboardView: View {
     private func actionCategory(_ action: String) -> String {
         let lower = action.lowercased()
         if lower.contains("curtail") { return "curtail" }
-        if lower.contains("export") || lower.contains("trickle") || lower == "p2p exp" { return "export" }
-        if lower.contains("import") || lower == "p2p imp" { return "import" }
+        if lower.contains("export") || lower.contains("trickle") || lower == "ltd exp" { return "export" }
+        if lower.contains("import") || lower == "ltd imp" { return "import" }
         if lower.contains("charge") { return "charge" }
         if lower.contains("discharge") { return "discharge" }
         if lower.contains("auto") || lower.contains("hold") { return "auto" }
@@ -1393,9 +1393,9 @@ struct ActionBadgeView: View {
         let totalRatedKw = siteInverters.isEmpty ? 0 :
             Double(siteInverters.map { $0.dischargeCapacityWatts }.reduce(0, +)) / 1000.0
 
-        // If exporting well below rated capacity, it's throttled for P2P
+        // If exporting well below rated capacity, it's a limited-rate export
         if totalRatedKw > 0 && gk < totalRatedKw * 0.8 {
-            return gk <= 1.0 ? "Trickle" : "P2P Exp"
+            return gk <= 1.0 ? "Trickle" : "Ltd Exp"
         }
         return "Export"
     }

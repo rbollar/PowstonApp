@@ -462,12 +462,12 @@ extension InverterAction {
     
     // Simplified action name for display
     // For export actions, compares optimal_discharging against inverter's rated power
-    // to distinguish Trickle vs P2P Export vs normal Export
+    // to distinguish Trickle vs limited Export vs normal Export
     var displayAction: String {
         displayAction(dischargeCapacityWatts: nil, chargeCapacityWatts: nil)
     }
 
-    /// Display action with inverter context for accurate P2P detection
+    /// Display action with inverter context for accurate limited-rate detection
     func displayAction(dischargeCapacityWatts: Int?, chargeCapacityWatts: Int? = nil) -> String {
         let lower = action.lowercased()
         if lower.contains("curtail") { return "Curtail" }
@@ -479,18 +479,18 @@ extension InverterAction {
         return action
     }
 
-    /// Distinguish Trickle / P2P Exp / Export using optimal_discharging vs rated power
+    /// Distinguish Trickle / Ltd Exp / Export using optimal_discharging vs rated power
     private func exportDisplayLabel(ratedWatts: Int?) -> String {
         guard let od = optimalDischarging, od > 0 else { return "Export" }
         if let rated = ratedWatts, od >= Double(rated) { return "Export" }
-        return od > 1000 ? "P2P Exp" : "Trickle"
+        return od > 1000 ? "Ltd Exp" : "Trickle"
     }
 
-    /// Distinguish Curtail / P2P Imp / Import using optimal_charging vs rated power
+    /// Distinguish Curtail / Ltd Imp / Import using optimal_charging vs rated power
     private func importDisplayLabel(ratedWatts: Int?) -> String {
         guard let oc = optimalCharging, oc > 0 else { return "Import" }
         if let rated = ratedWatts, oc >= Double(rated) { return "Import" }
-        return oc > 1000 ? "P2P Imp" : "Curtail"
+        return oc > 1000 ? "Ltd Imp" : "Curtail"
     }
 
     /// Normalized action category for color/icon matching (stable, not for display)

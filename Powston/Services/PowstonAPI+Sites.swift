@@ -67,8 +67,9 @@ extension PowstonAPI {
                 return
             }
             
-            let decoded = try JSONDecoder().decode([Site].self, from: data)
-            print("✅ Successfully decoded \(decoded.count) sites")
+            let listed = try JSONDecoder().decode([Site].self, from: data)
+            print("✅ Successfully decoded \(listed.count) sites")
+            let decoded = await withRetailerKeys(listed)
             
             await MainActor.run {
                 withTransaction(Transaction(animation: nil)) {
@@ -86,6 +87,46 @@ extension PowstonAPI {
         }
     }
     
+    // MARK: - Site Detail
+
+    /// The /api/sites list omits secret fields such as amber_key, but the
+    /// single-site endpoint returns them. Swap in the detailed record for
+    /// Amber sites so the Powston-provided Amber key is available.
+    private func withRetailerKeys(_ sites: [Site]) async -> [Site] {
+        var result = sites
+        for (index, site) in sites.enumerated()
+        where site.activeRetailer?.lowercased() == "amber" && (site.amberKey ?? "").isEmpty {
+            if let detail = await fetchSiteDetail(siteId: site.id) {
+                result[index] = detail
+            }
+        }
+        return result
+    }
+
+    /// Fetch one site's full record (GET /api/site/{site_id})
+    func fetchSiteDetail(siteId: Int) async -> Site? {
+        guard !apiKey.isEmpty, let url = URL(string: "\(baseURL)/api/site/\(siteId)") else { return nil }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 30
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                print("❌ Site detail fetch failed: HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+                return nil
+            }
+            let site = try JSONDecoder().decode(Site.self, from: data)
+            return site.id == siteId ? site : nil
+        } catch {
+            print("❌ Site detail error: \(error)")
+            return nil
+        }
+    }
+
     // MARK: - Update Site
     
     func updateSite(siteId: Int, displayName: String? = nil, pvoutputApiKey: String? = nil) async -> Result<Void, Error> {
@@ -421,8 +462,9 @@ extension PowstonAPI {
 
             // Trigger LocalVolts daily sync for zero-inverter sites (fire-and-forget)
             let siteId = site.id
-            Task.detached { [siteId] in
-                await LocalVoltsService.shared.performDailySyncIfNeeded(siteId: siteId)
+            let retailer = site.activeRetailer
+            Task.detached { [siteId, retailer] in
+                await LocalVoltsService.shared.performDailySyncIfNeeded(siteId: siteId, activeRetailer: retailer)
             }
 
             return

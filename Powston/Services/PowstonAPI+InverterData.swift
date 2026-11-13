@@ -70,8 +70,9 @@ extension PowstonAPI {
 
             // Trigger daily LV sync if needed (fire-and-forget, non-blocking)
             if let siteId = selectedSite?.id {
-                Task.detached { [siteId] in
-                    await LocalVoltsService.shared.performDailySyncIfNeeded(siteId: siteId)
+                let retailer = selectedSite?.activeRetailer
+                Task.detached { [siteId, retailer] in
+                    await LocalVoltsService.shared.performDailySyncIfNeeded(siteId: siteId, activeRetailer: retailer)
                 }
             }
 

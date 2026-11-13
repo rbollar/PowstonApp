@@ -357,17 +357,21 @@ struct SettingsView: View {
                         Text("This app is an independent client that connects to Powston systems using their publicly available APIs. It is not affiliated with, endorsed by, or operated by Powston.")
                                                     .font(.caption)
                                                     .foregroundColor(.secondary)
+                                                    #if DEBUG
                                                     .onLongPressGesture {
                                                         let generator = UIImpactFeedbackGenerator(style: .medium)
                                                         generator.impactOccurred()
                                                         showDevOptions.toggle()
                                                     }
+                                                    #endif
                         
                         Text("Powston helps manage battery and energy system behavior using configurable automation and real-time data. Outcomes depend on energy prices, equipment performance, and site conditions. Users are responsible for ensuring compliance with their energy plan and local requirements.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                         
-                        // Hidden dev options - revealed by long-press on disclaimer
+                        // Dev options, revealed by long-press on the disclaimer. Debug builds
+                        // only (App Review 2.5.19: no hidden features in Release).
+                        #if DEBUG
                         if showDevOptions {
                             Toggle(isOn: $useDevServer) {
                                 VStack(alignment: .leading) {
@@ -393,6 +397,7 @@ struct SettingsView: View {
                             .listRowBackground(Color.purple.opacity(0.1))
 
                         }
+                        #endif
                     }
                 }
             }

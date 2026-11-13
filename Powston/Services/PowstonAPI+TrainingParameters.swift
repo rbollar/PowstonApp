@@ -18,6 +18,9 @@ struct TrainingParameters: Codable {
     var alwaysImportSoc: Int?
     var defaultExport: Int?
     var importFactor: Int?
+    // Only present for sites whose decision script supports them
+    var minExportMargin: Int?
+    var goodSunHour: Int?
 
     enum CodingKeys: String, CodingKey {
         case minSoc = "min_soc"
@@ -28,6 +31,8 @@ struct TrainingParameters: Codable {
         case alwaysImportSoc = "ALWAYS_IMPORT_SOC"
         case defaultExport = "DEFAULT_EXPORT"
         case importFactor = "IMPORT_FACTOR"
+        case minExportMargin = "MIN_EXPORT_MARGIN"
+        case goodSunHour = "GOOD_SUN_HOUR"
     }
 
     /// Create empty parameters
@@ -40,7 +45,9 @@ struct TrainingParameters: Codable {
             batterySocAc: nil,
             alwaysImportSoc: nil,
             defaultExport: nil,
-            importFactor: nil
+            importFactor: nil,
+            minExportMargin: nil,
+            goodSunHour: nil
         )
     }
 }

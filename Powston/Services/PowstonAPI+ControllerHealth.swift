@@ -40,6 +40,39 @@ enum ControllerHealthStatus: Equatable {
     }
 }
 
+// MARK: - Runtime Diagnosis
+
+/// Response from /api/diagnose/runtime/{inverter_id}: Powston's own check of
+/// why an inverter's runtime data is stale or missing, as a single verdict
+struct RuntimeDiagnosis: Codable {
+    let verdict: String
+    let headline: String?
+    let nextSteps: [String]?
+    let runtimeData: RuntimeData?
+
+    struct RuntimeData: Codable {
+        let rowsLast30Min: Int?
+        let latestRowTime: String?
+
+        enum CodingKeys: String, CodingKey {
+            case rowsLast30Min = "rows_last_30min"
+            case latestRowTime = "latest_row_time"
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case verdict, headline
+        case nextSteps = "next_steps"
+        case runtimeData = "runtime_data"
+    }
+
+    /// Verdict code as readable text (e.g. "api_only_inverter" -> "Api only inverter")
+    var verdictLabel: String {
+        let words = verdict.replacingOccurrences(of: "_", with: " ")
+        return words.prefix(1).uppercased() + words.dropFirst()
+    }
+}
+
 // MARK: - PowstonAPI Extension
 
 extension PowstonAPI {
@@ -107,6 +140,35 @@ extension PowstonAPI {
         }
     }
     
+    // MARK: - Fetch Runtime Diagnosis
+
+    func fetchRuntimeDiagnosis(inverterId: Int) async -> RuntimeDiagnosis? {
+        guard !apiKey.isEmpty else { return nil }
+
+        let urlString = "\(baseURL)/api/diagnose/runtime/\(inverterId)"
+        guard let url = URL(string: urlString) else { return nil }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "accept")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                print("❌ Runtime diagnosis fetch failed: HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+                return nil
+            }
+
+            return try JSONDecoder().decode(RuntimeDiagnosis.self, from: data)
+        } catch {
+            print("❌ Runtime diagnosis error: \(error)")
+            return nil
+        }
+    }
+
     // MARK: - Fetch Communication Devices
     
     func fetchCommunicationDevices(siteId: Int) async -> [CommunicationDevice] {
