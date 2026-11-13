@@ -114,6 +114,20 @@ Data map (from a read of the code, 2026-11-14):
   xcrun simctl spawn <sim> log show --last 5m --info --debug --predicate 'subsystem == "com.bollar.Powston" AND category == "Ask"'
   ```
 
+## Build 16 on Rick's iPhone (2026-11-14)
+
+- Every question fails on PCC with `PrivateCloudComputeError 32031`, wrapped in `ModelManagerServices.InferenceError 2008`, then `ModelManagerError 1001`, then `FoundationModels.LanguageModelError -1`. The on-device fallback answered both questions.
+- It fails the same way with airplane mode plus Wi-Fi and with Wi-Fi alone (there's no cell service where Rick is), so the network path isn't the cause.
+- Rick: "The PCC approval is not restricted."
+- The same request with the same tools and instructions works in the simulator, which uses this Mac's PCC access.
+- 32031 isn't documented. Neighboring codes appear in user reports: 32033 alongside PCC token rate-limit log lines on iOS 27.0.1 (github.com/huamidev/GestaltX/issues/101), and 32080 with Siri failures (github.com/SkyBlue997/enableMacosAI/issues/81).
+- On-device answers mixed the wholesale $/MWh in as a "peak" price and wrote "$15.7¢/kWh".
+
+Changes in 17:
+- The notice shows only the innermost error, e.g. "(Private Cloud Compute error 32031)". The full chain goes to the log.
+- After the first PCC failure in a sheet, the app runs a check: a plain PCC request, then (if that works) one with our instructions but no tools. The notice reports each result.
+- The snapshot labels the wholesale price "not what the household pays". The instructions say to write cents as 15.7¢/kWh, never with $, and to mention the wholesale price only if asked.
+
 ## Open items
 
 - Try Ask on a device: PCC answers, limited mode (airplane mode), demo mode, the quota banner (Xcode scheme option "Simulate Apple Foundation Models Availability").

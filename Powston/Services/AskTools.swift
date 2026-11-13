@@ -255,7 +255,7 @@ nonisolated struct SiteSnapshotTool: Tool {
         }
         lines.append("Buy price now: \(AskData.cents(data.buyPrice))")
         lines.append("Sell price now: \(AskData.cents(data.sellPrice))")
-        if let rrp = data.rrp { lines.append(String(format: "Wholesale price: $%.0f/MWh", rrp)) }
+        if let rrp = data.rrp { lines.append(String(format: "Wholesale market price (not what the household pays): $%.0f/MWh", rrp)) }
         lines.append("Controller action: \(data.currentAction)")
         if let reason = data.reason, !reason.isEmpty { lines.append("Controller's reason: \(reason)") }
         if let strategy = data.userCodeName, !strategy.isEmpty { lines.append("Strategy: \(strategy)") }

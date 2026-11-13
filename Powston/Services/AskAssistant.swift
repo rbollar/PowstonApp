@@ -151,7 +151,12 @@ final class AskAssistant: ObservableObject {
                     show(error)
                     return
                 }
-                messages.append(AskMessage(role: .notice, text: String(localized: "Private Cloud Compute couldn't answer that, so your iPhone is answering instead.") + Self.detail(error)))
+                var note = String(localized: "Private Cloud Compute couldn't answer that, so your iPhone is answering instead.") + Self.detail(error)
+                if !hasRunCloudCheck {
+                    hasRunCloudCheck = true
+                    note += "\n" + (await cloudCheck())
+                }
+                messages.append(AskMessage(role: .notice, text: note))
             }
         }
 
@@ -166,9 +171,54 @@ final class AskAssistant: ObservableObject {
     }
 
     /// The error's own words, for TestFlight testers to report. Empty for cancellation.
+    /// The innermost error, e.g. "(Private Cloud Compute error 32031)", for testers to report.
+    /// The full chain goes to the log. Empty for cancellation.
     private static func detail(_ error: Error) -> String {
         if error is CancellationError { return "" }
-        return "\n(" + String(describing: error) + ")"
+        return "\n(" + innermost(error) + ")"
+    }
+
+    private static func innermost(_ error: Error) -> String {
+        var current = error as NSError
+        while true {
+            let info = current.userInfo
+            if let next = info[NSUnderlyingErrorKey] as? NSError {
+                current = next
+            } else if let list = info[NSMultipleUnderlyingErrorsKey] as? [NSError], let next = list.first {
+                current = next
+            } else {
+                break
+            }
+        }
+        let domain = current.domain
+            .replacingOccurrences(of: "PrivateCloudComputeError", with: "Private Cloud Compute error")
+            .replacingOccurrences(of: "FoundationModels.", with: "")
+        return "\(domain) \(current.code)"
+    }
+
+    /// Run once per sheet after a PCC failure: is PCC reachable at all, and does it
+    /// fail only with our tools? Answers go in the notice so testers can report them.
+    private var hasRunCloudCheck = false
+
+    private func cloudCheck() async -> String {
+        guard #available(iOS 27.0, *) else { return "" }
+        func attempt(_ session: LanguageModelSession) async -> String {
+            do {
+                _ = try await session.respond(to: "Reply with the single word OK.")
+                return String(localized: "worked")
+            } catch {
+                Self.log.error("PCC check failed: \(String(describing: error), privacy: .public)")
+                return String(localized: "failed") + " (" + Self.innermost(error) + ")"
+            }
+        }
+        let plain = await attempt(LanguageModelSession(model: PrivateCloudComputeLanguageModel()))
+        var result = String(localized: "Check: a plain request") + " " + plain
+        if plain == String(localized: "worked") {
+            let withInstructions = await attempt(LanguageModelSession(
+                model: PrivateCloudComputeLanguageModel(), instructions: Self.instructions(limited: false)))
+            result += "; " + String(localized: "with instructions but no tools") + " " + withInstructions
+        }
+        return result + "."
     }
 
     @available(iOS 27.0, *)
@@ -285,7 +335,9 @@ final class AskAssistant: ObservableObject {
         - The controller has no fixed plan. It decides every few minutes from prices and the battery, \
         so describe what it is likely to do and say it can change.
         - Peak periods are expensive to import. Negative prices mean being paid to use power.
-        - Use $ and ¢ with the numbers the tools give, kWh for energy and kW for power.
+        - Write prices in cents per kWh as the tools give them, like 15.7¢/kWh. Never put $ in front of a ¢ amount. \
+        Write money in dollars, like $3.75. Use kWh for energy and kW for power.
+        - The wholesale market price ($/MWh) isn't what the household pays. Mention it only if asked.
         - Use Australian English spelling.
         - Answer in a few short sentences or a short list. No tables.
         \(limited ? "- Keep answers brief; you are answering one question with a small model." : "")
