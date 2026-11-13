@@ -270,7 +270,7 @@ nonisolated struct SiteSnapshotTool: Tool {
 nonisolated struct PriceForecastTool: Tool {
     let api: PowstonAPI
     let name = "get_price_forecast"
-    let description = "Forecast buy and sell prices for the selected site in 30-minute periods, with the cheapest and most expensive times. For questions about tonight, tomorrow or later today, ask for 24 hours."
+    let description = "Forecast buy and sell prices for the selected site in 30-minute periods, with the cheapest and most expensive times. Powston's own forecast covers the next several hours; for Amber Electric customers, Amber's forecast continues it to early tomorrow. For questions about tonight, tomorrow or later today, ask for 24 hours."
 
     @Generable
     struct Arguments {
@@ -284,47 +284,78 @@ nonisolated struct PriceForecastTool: Tool {
     }
 
     @MainActor
-    private static func answer(hours: Int, api: PowstonAPI) -> String {
+    private static func answer(hours: Int, api: PowstonAPI) async -> String {
         guard let data = api.data, let buy = data.buyForecast, !buy.isEmpty else {
             return "No price forecast is loaded."
         }
         let site = api.selectedSite
         let sell = data.sellForecast ?? []
         let now = Date()
-        var periods: [(start: Date, buy: Double, sell: Double?)] = []
+        let wanted = max(1, min(hours, 24)) * 2
+        var periods: [(start: Date, buy: Double, sell: Double?, amber: Bool)] = []
         for index in buy.indices {
             guard let start = data.absoluteTimeForPeriod(index) else { continue }
             // Skip periods that have already ended
             if start.addingTimeInterval(30 * 60) <= now { continue }
-            periods.append((start, buy[index], index < sell.count ? sell[index] : nil))
-            if periods.count >= max(1, min(hours, 24)) * 2 { break }
+            periods.append((start, buy[index], index < sell.count ? sell[index] : nil, false))
+            if periods.count >= wanted { break }
         }
         guard !periods.isEmpty else { return "The loaded forecast doesn't reach past now." }
+        let powstonEnd = periods.last!.start.addingTimeInterval(30 * 60)
+
+        // Amber customers: continue with Amber's forecast past the end of Powston's
+        var amberUsed = false
+        if periods.count < wanted, !api.isDemoMode, AmberService.shared.isConfigured(for: site) {
+            let intervals = await AmberService.shared.forecastIntervals(site: site)
+            let iso = ISO8601DateFormatter()
+            var feedIn: [Date: Double] = [:]
+            for interval in intervals where interval.channelType == .feedIn {
+                if let start = iso.date(from: interval.startTime) { feedIn[Self.halfHour(start)] = -interval.perKwh }
+            }
+            let general = intervals
+                .filter { $0.channelType == .general }
+                .compactMap { interval in iso.date(from: interval.startTime).map { (Self.halfHour($0), interval.perKwh) } }
+                .filter { $0.0 >= powstonEnd }
+                .sorted { $0.0 < $1.0 }
+            for (start, price) in general where periods.count < wanted {
+                periods.append((start, price, feedIn[start], true))
+                amberUsed = true
+            }
+        }
 
         var lines: [String] = []
         if api.isDemoMode { lines.append(AskData.demoNote) }
         lines.append("Times are local to \(site.map(AskData.name) ?? "the site"). Prices in cents per kWh.")
+        lines.append("Powston's forecast runs to \(AskData.time(powstonEnd, site: site)); that's as far ahead as Powston forecasts.")
+        if amberUsed {
+            lines.append("After that, the periods marked (Amber) are Amber Electric's forecast of the household's retail prices. They are estimates and can change.")
+        }
+        let end = periods.last!.start.addingTimeInterval(30 * 60)
+        lines.append("The forecast data ends at \(AskData.time(end, site: site)). Say so if the question is about later than that.")
         if let cheapest = periods.min(by: { $0.buy < $1.buy }) {
-            lines.append("Cheapest to buy: \(AskData.cents(cheapest.buy)) at \(AskData.time(cheapest.start, site: site))")
+            lines.append("Cheapest to buy: \(AskData.cents(cheapest.buy)) at \(AskData.time(cheapest.start, site: site))\(cheapest.amber ? " (Amber)" : "")")
         }
         if let dearest = periods.max(by: { $0.buy < $1.buy }) {
-            lines.append("Most expensive to buy: \(AskData.cents(dearest.buy)) at \(AskData.time(dearest.start, site: site))")
+            lines.append("Most expensive to buy: \(AskData.cents(dearest.buy)) at \(AskData.time(dearest.start, site: site))\(dearest.amber ? " (Amber)" : "")")
         }
         if let best = periods.filter({ $0.sell != nil }).max(by: { $0.sell! < $1.sell! }) {
-            lines.append("Best to sell: \(AskData.cents(best.sell)) at \(AskData.time(best.start, site: site))")
+            lines.append("Best to sell: \(AskData.cents(best.sell)) at \(AskData.time(best.start, site: site))\(best.amber ? " (Amber)" : "")")
         }
         if periods.contains(where: { $0.buy < 0 }) {
             lines.append("Some periods have negative buy prices (paid to use power).")
         }
-        if let last = periods.last {
-            let end = last.start.addingTimeInterval(30 * 60)
-            lines.append("The forecast data ends at \(AskData.time(end, site: site)). Say so if the question is about later than that.")
-        }
         lines.append("Periods (start: buy / sell):")
         for period in periods {
-            lines.append("\(AskData.time(period.start, site: site)): \(String(format: "%.1f", period.buy)) / \(period.sell.map { String(format: "%.1f", $0) } ?? "?")")
+            let sellText = period.sell.map { String(format: "%.1f", $0) } ?? "?"
+            lines.append("\(AskData.time(period.start, site: site)): \(String(format: "%.1f", period.buy)) / \(sellText)\(period.amber ? " (Amber)" : "")")
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// Amber's interval starts carry a stray second (19:30:01); round down to the half hour
+    nonisolated private static func halfHour(_ date: Date) -> Date {
+        let seconds = date.timeIntervalSinceReferenceDate
+        return Date(timeIntervalSinceReferenceDate: (seconds / 1800).rounded(.down) * 1800)
     }
 }
 

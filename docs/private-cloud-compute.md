@@ -149,6 +149,14 @@ Changes in 17:
   - The model asked the forecast tool for about 8 hours and said "the forecast beyond 5:00 PM isn't listed". The tool now says to use 24 hours for tonight or tomorrow, and it states where its data ends.
   - With no overnight data, the model guessed about overnight charging. The 24-hour forecast gives it the data.
 
+## Build 18 and the Amber forecast (2026-11-14)
+
+- On 18, "What will my battery do tonight?" answered honestly: "The forecast data only goes to 5:45 PM". Powston's live forecast (`buyForecast`/`sellForecast`) covers only about 8 hours. The Prices tab shows the same window.
+- Rick: "Or Amber api." For sites with Amber configured, the forecast tool now continues past Powston's window with Amber's forecast: `AmberService.forecastIntervals(site:next:)`, which leaves the Prices tab's published state alone. Amber periods are marked "(Amber)" and described as Amber's estimate of retail prices. The sell price is the feed-in `perKwh` negated, because Amber reports money paid to the customer as a negative number.
+- Amber's reach (checked 2026-11-14 with the repo's gitignored `amber.key`): `next=96` and `next=288` both return 45 general intervals, from now to 18:00Z (04:00 AEST the next day). Asking for more than it has is harmless. Interval starts carry a stray second (`19:30:01Z`), so the tool rounds them down to the half hour.
+- Non-Amber sites: the tool tells the model that Powston's window is as far ahead as Powston forecasts.
+- Ships in 1.4 (19). The Amber path can't run in the simulator, because demo mode skips Amber.
+
 ## Open items
 
 - Try Ask on a device: PCC answers, limited mode (airplane mode), demo mode, the quota banner (Xcode scheme option "Simulate Apple Foundation Models Availability").

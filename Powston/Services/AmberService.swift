@@ -156,6 +156,21 @@ class AmberService: ObservableObject {
         isLoadingPrices = false
     }
 
+    /// Price forecast for Ask, without touching the published state the Prices tab shows.
+    /// Amber forecasts to about 4 AM the next day; asking for more just returns what it has.
+    func forecastIntervals(site: Site?, next: Int = 96) async -> [AmberInterval] {
+        guard let key = apiKey(for: site) else { return [] }
+        do {
+            let siteId = try await resolveSiteId(site: site, apiKey: key)
+            return try await request(
+                "/sites/\(siteId)/prices/current?next=\(next)&previous=0&resolution=30",
+                apiKey: key
+            )
+        } catch {
+            return []
+        }
+    }
+
     /// Fetch usage for a date range (Amber finalizes usage ~T+1)
     func fetchUsage(site: Site?, from: Date, to: Date) async {
         guard let key = apiKey(for: site) else { return }
