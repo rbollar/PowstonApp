@@ -93,6 +93,13 @@ if [[ -n "$PREBUILT" ]]; then
   log "Using archive built elsewhere: $ARCHIVE"
 else
   ARCHIVE="$WORK/Powston.xcarchive"
+  # The push server's app secret isn't in git. It lives in a root-only file on harriet,
+  # copied to ~/powston-secrets/push_secret on the box (mode 600). Write it into this
+  # throwaway copy's Info.plist; never print it.
+  PUSH_SECRET_FILE="$HOME/powston-secrets/push_secret"
+  [[ -s "$PUSH_SECRET_FILE" ]] || die "missing $PUSH_SECRET_FILE (see docs/testflight.md)"
+  /usr/libexec/PlistBuddy -c "Delete :PowstonPushSecret" Powston/Info.plist 2>/dev/null || true
+  /usr/libexec/PlistBuddy -c "Add :PowstonPushSecret string $(cat "$PUSH_SECRET_FILE")" Powston/Info.plist
   log "Archiving -> $ARCHIVE"
   xcodebuild archive \
     -project Powston.xcodeproj \

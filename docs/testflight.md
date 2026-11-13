@@ -33,11 +33,33 @@
 - **Now:** both are Debug-only. The long-press and the section are inside `#if DEBUG`. `PowstonAPI.useDevServer` and `DecisionsView.experimentalFeaturesOn` return false in Release, even if the stored switch was left on.
 - **Checked 2026-11-13:** the Release simulator binary has no "Use Dev Server" string; the Debug one has it.
 
-## Security (open, a separate job)
+## Security: the push secret leak (fixed 2026-11-13)
 
-- `Powston/Services/PushNotificationService.swift` carries the push.bollar.com shared secret as a string. It has been in git since 2077bb4 (2026-02-02), and the GitHub mirror rbollar/PowstonApp is public.
-- Fix: rotate it on push.bollar.com, and stop shipping a static secret in the app.
-- Rick, 2026-11-13: handle it as its own job; a new build doesn't widen the exposure.
+Rick, 2026-11-13: "Fix the GitHub secret leak."
+
+- **The leak:** `PushNotificationService.swift` carried the push.bollar.com secret from 2077bb4 (2026-02-02), and the GitHub mirror is public. That secret also unlocked `POST /api/push/alert`, which sends any title and body to **every** subscriber (34 on 2026-11-13). So anyone could push messages to every user's phone.
+- **Server** (harriet `/data/powston`, service `powston-push`; files backed up as `*.bak-secret-20261113`, and the unit as `/root/powston-push.service.bak-secret-20261113`):
+  - The secrets moved out of the world-readable unit into `/etc/powston-push.env` (root, 600), loaded with `EnvironmentFile=`.
+  - **PUSH_SECRET** is new; the app sends it.
+  - **PUSH_LEGACY_SECRET** is the leaked one. It can still register and unregister devices, so the App Store 1.2 app and TestFlight 1.3 (11) keep working, but it can't send alerts.
+  - **PUSH_ADMIN_SECRET** is new and is the only secret `/api/push/alert` accepts. The alert endpoint also refuses any request carrying `CF-Connecting-IP`, so it can't be reached through the Cloudflare tunnel, only from harriet itself.
+  - The defaults that were hard-coded in `push_server.py` are gone.
+  - The alert callers (`health_check.py`, `powston_failsafe.py`, `cron_wrapper.sh`) read the admin secret from the env file.
+- **Tests** (a throwaway copy on port 8499 with an empty subscriber database, so a failed check couldn't reach anyone):
+  - Alert with the leaked secret: 403. With the app secret: 403. With the admin secret plus a CF header: 403. With the admin secret locally: ok.
+  - Register with a wrong secret: 401. With the legacy secret: 200. With the new secret: 200.
+- **App:** reads `PowstonPushSecret` from Info.plist and skips registration when it's empty (local builds). `Scripts/tf_ship_ios.sh` writes the key from `~/powston-secrets/push_secret` (box, 600, copied from harriet's env file) into the box's throwaway copy. The secret is not in git.
+- **History:** the old secret stays in the public GitHub history; it can no longer send alerts. Drop `PUSH_LEGACY_SECRET` once every user is on 1.3 or later, which ends its last use.
+- **Copy the app secret to the box:**
+  ```
+  ssh root@harriet 'sed -n "s/^PUSH_SECRET=//p" /etc/powston-push.env' | ssh admin@10.0.0.2 'umask 077; mkdir -p ~/powston-secrets; tr -d "\n" > ~/powston-secrets/push_secret'
+  ```
+
+## GitHub and license (2026-11-13)
+
+- **Repo:** https://github.com/rbollar/PowstonApp is public, MIT ("Copyright (c) 2025 rbollar", `LICENSE`, 3f454bc), with default branch main. Gitea `rick/powston-app` is the private copy.
+- **In the app:** there is no link to the source and no license or acknowledgements text.
+- **Packages:** GRDB.swift 7.9.0 (MIT), socket.io-client-swift 16.1.1 (MIT), Starscream 4.0.8 (Apache 2.0). Their licenses ask for their notices to ship with the app.
 
 ## Recipes
 
@@ -52,4 +74,5 @@
 - Upload 1.3 (11) from the build box. This needs App Store profiles for `com.bollar.Powston` and `com.bollar.Powston.PowstonWidget`, and box time that doesn't clash with DeepSix 1.1 (review on 2026-11-15).
 - Add the build to Internal Testing; test Battery ROI, Controller Health and Amber setup on a device.
 - The watch app and Apple TV builds.
-- Rotate the push secret.
+- Drop PUSH_LEGACY_SECRET on the push server when 1.2 users have moved to 1.3.
+- Add acknowledgements for the packages (and, if wanted, the GitHub link) to Settings › About.

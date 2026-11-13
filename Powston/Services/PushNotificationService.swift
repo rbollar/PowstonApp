@@ -13,7 +13,10 @@ class PushNotificationService {
     // MARK: - Configuration
     
     private let serverURL = "https://push.bollar.com"
-    private let sharedSecret = "RU2j*XV9FDYHvvHZXU-ZhWg!i-dwwqM2"
+    /// The push server's app secret. It isn't in the repo: the ship script writes it into
+    /// the build's Info.plist (PowstonPushSecret) from a root-only file on the build box.
+    /// Without it, as in local builds, the app doesn't register for price alerts.
+    private let sharedSecret = Bundle.main.object(forInfoDictionaryKey: "PowstonPushSecret") as? String ?? ""
     
     private var apnsEnvironment: String {
         #if DEBUG
@@ -39,6 +42,10 @@ class PushNotificationService {
         buyBelow: Double?,
         spikeThreshold: Double?
     ) async -> Bool {
+        guard !sharedSecret.isEmpty else {
+            print("⚠️ Push registration: no push secret in this build")
+            return false
+        }
         guard let url = URL(string: "\(serverURL)/api/push/register") else {
             print("❌ Push registration: Invalid URL")
             return false
@@ -95,6 +102,7 @@ class PushNotificationService {
     
     /// Unregister device from push notifications
     func unregister(deviceToken: String) async -> Bool {
+        guard !sharedSecret.isEmpty else { return false }
         guard let url = URL(string: "\(serverURL)/api/push/register") else {
             print("❌ Push unregister: Invalid URL")
             return false
