@@ -58,7 +58,8 @@ Rick, 2026-11-13: "Fix the GitHub secret leak."
 ## GitHub and license (2026-11-13)
 
 - **Repo:** https://github.com/rbollar/PowstonApp is public, MIT ("Copyright (c) 2025 rbollar", `LICENSE`, 3f454bc), with default branch main. Gitea `rick/powston-app` is the private copy.
-- **In the app:** there is no link to the source and no license or acknowledgements text.
+- **In the app (until build 12):** there was no link to the source and no license or acknowledgements text.
+- **Since 1e41945+1:** Settings › About › Acknowledgements (`Powston/Views/Components/AcknowledgementsView.swift`). It has "Source Code on GitHub", the app's MIT License, and each package with its full license text, copied verbatim from the checked-out packages. Rick, 2026-11-13: "Yes on both" (push the commits; add the acknowledgements). It builds in Debug for the simulator, but nobody has looked at it on screen yet. It first ships in the build after 12.
 - **Packages:** GRDB.swift 7.9.0 (MIT), socket.io-client-swift 16.1.1 (MIT), Starscream 4.0.8 (Apache 2.0). Their licenses ask for their notices to ship with the app.
 
 ## Recipes
@@ -74,4 +75,5 @@ Rick, 2026-11-13: "Fix the GitHub secret leak."
 - Test Battery ROI, Controller Health and Amber setup on a device.
 - The watch app and Apple TV builds.
 - Drop PUSH_LEGACY_SECRET on the push server when 1.2 users have moved to 1.3.
-- Add acknowledgements for the packages (and, if wanted, the GitHub link) to Settings › About.
+- Look at Acknowledgements on a device; it ships in the next build.
+- Submit build 12 to External Testing (Beta App Review) once Rick approves the What to Test and review notes.

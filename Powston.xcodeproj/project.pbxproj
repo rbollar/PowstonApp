@@ -140,6 +140,7 @@
 		F356D9E8F93376D06A0C4993 /* LocalVoltsSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E06218BA61CCF2CAD20E9F21 /* LocalVoltsSetupView.swift */; };
 		CE954D92BF75451A90A8BDD6 /* AmberViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D23D6D36C8F43FBAC5AB485 /* AmberViews.swift */; };
 		A1B2C3D4E5F647A8B9C0D1E5 /* MarketROIView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F647A8B9C0D1E4 /* MarketROIView.swift */; };
+		A1B2C3D4E5F647A8B9C0D1F1 /* AcknowledgementsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F647A8B9C0D1F0 /* AcknowledgementsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -358,6 +359,7 @@
 		E06218BA61CCF2CAD20E9F21 /* LocalVoltsSetupView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LocalVoltsSetupView.swift; sourceTree = "<group>"; };
 		7D23D6D36C8F43FBAC5AB485 /* AmberViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmberViews.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F647A8B9C0D1E4 /* MarketROIView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketROIView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F647A8B9C0D1F0 /* AcknowledgementsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AcknowledgementsView.swift; sourceTree = "<group>"; };
 		E0AC926E72215CB60A5863FA /* PowstonDataStore+DaySummaries.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "PowstonDataStore+DaySummaries.swift"; sourceTree = "<group>"; };
 		E1A3A6DBAF147B6554AF7E31 /* PeakAnalysisView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PeakAnalysisView.swift; sourceTree = "<group>"; };
 		EAED173438269DF438A8EB86 /* PowstonAPI+Tariffs.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "PowstonAPI+Tariffs.swift"; sourceTree = "<group>"; };
@@ -693,6 +695,7 @@
 				E06218BA61CCF2CAD20E9F21 /* LocalVoltsSetupView.swift */,
 				7D23D6D36C8F43FBAC5AB485 /* AmberViews.swift */,
 				A1B2C3D4E5F647A8B9C0D1E4 /* MarketROIView.swift */,
+				A1B2C3D4E5F647A8B9C0D1F0 /* AcknowledgementsView.swift */,
 				E1A3A6DBAF147B6554AF7E31 /* PeakAnalysisView.swift */,
 				1052E6A5FD0F16D8F435FF47 /* ProfitIntelligenceCard.swift */,
 				95C5628A369887F7F8ECCECE /* ProfitIntelligenceView.swift */,
@@ -1364,6 +1367,7 @@
 				F356D9E8F93376D06A0C4993 /* LocalVoltsSetupView.swift in Sources */,
 				CE954D92BF75451A90A8BDD6 /* AmberViews.swift in Sources */,
 				A1B2C3D4E5F647A8B9C0D1E5 /* MarketROIView.swift in Sources */,
+				A1B2C3D4E5F647A8B9C0D1F1 /* AcknowledgementsView.swift in Sources */,
 				3936DCEC7047E82A4D5B852F /* PeakAnalysisView.swift in Sources */,
 				DCE9691DCBB4E234DD45847E /* ProfitIntelligenceCard.swift in Sources */,
 				5575A05FEA0AD81E0900F214 /* ProfitIntelligenceView.swift in Sources */,

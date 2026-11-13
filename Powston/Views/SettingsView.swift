@@ -354,6 +354,10 @@ struct SettingsView: View {
                             }
                         }
                         
+                        NavigationLink("Acknowledgements") {
+                            AcknowledgementsView()
+                        }
+
                         Text("This app is an independent client that connects to Powston systems using their publicly available APIs. It is not affiliated with, endorsed by, or operated by Powston.")
                                                     .font(.caption)
                                                     .foregroundColor(.secondary)
